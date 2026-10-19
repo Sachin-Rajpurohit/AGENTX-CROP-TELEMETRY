@@ -1,11 +1,21 @@
 """Offline tests (no API key). Run: python -m unittest discover tests"""
 import json
+import os
 import subprocess
 import sys
+import tempfile
 import unittest
 
-from agent.core import AgentExecutor, parse_json
-from tools import build_tools
+import pandas as pd
+
+# Fixture data folder. Set BEFORE importing tools so any module that reads the env at import time sees it.
+_FIXTURE = tempfile.mkdtemp()
+pd.DataFrame({"timestamp": pd.date_range("2026-10-01", periods=8), "moisture": [31, 29, 28, 27, 26, 24, 23, 22],
+              "N": [40] * 8, "P": [20] * 8, "K": [30] * 8}).to_csv(os.path.join(_FIXTURE, "soil_telemetry.csv"), index=False)
+os.environ["AGENTX_DATA_DIR"] = _FIXTURE
+
+from agent.core import AgentExecutor, parse_json  # noqa: E402
+from tools import build_tools  # noqa: E402
 
 
 class Scripted:
@@ -21,12 +31,18 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(parse_json('text ```json\n{"a": 1}\n``` more'), {"a": 1})
 
     def test_tool_call_then_final(self):
-        llm = Scripted(['{"thought":"t","action":"read_file","args":{"filename":"scores.csv"}}',
-                        '{"thought":"t","final_answer":"recursion is weak"}'])
+        llm = Scripted(['{"thought":"t","action":"get_soil_readings","args":{"days":7}}',
+                        '{"thought":"t","final_answer":"moisture is low"}'])
         answer, trace = AgentExecutor(llm, build_tools()).run("q")
-        self.assertEqual(answer, "recursion is weak")
-        self.assertEqual(trace[0]["tool"], "read_file")
-        self.assertIn("recursion", trace[0]["observation"])
+        self.assertEqual(answer, "moisture is low")
+        self.assertEqual(trace[0]["tool"], "get_soil_readings")
+        self.assertIn("moisture", trace[0]["observation"])
+
+    def test_crop_tools_in_the_loop(self):
+        llm = Scripted(['{"thought":"t","action":"analyze_trend","args":{"column":"moisture"}}',
+                        '{"thought":"t","final_answer":"YELLOW"}'])
+        _, trace = AgentExecutor(llm, build_tools()).run("q")
+        self.assertIn("falling", trace[0]["observation"])
 
     def test_tool_error_becomes_observation(self):
         llm = Scripted(['{"action":"read_file","args":{"filename":"nope.csv"}}', '{"final_answer":"x"}'])
@@ -40,7 +56,8 @@ class AgentTests(unittest.TestCase):
 
     def test_sql_and_calculator(self):
         t = build_tools()
-        self.assertIn("recursion", t["sql_query"].execute(filename="scores.csv", sql="SELECT topic FROM data WHERE score < 40"))
+        self.assertIn("23", str(t["sql_query"].execute(filename="soil_telemetry.csv",
+                                                        sql="SELECT moisture FROM data WHERE moisture < 25")))
         self.assertEqual(t["calculator"].execute(expression="2+2*10"), 22)
 
     def test_cli_contract(self):

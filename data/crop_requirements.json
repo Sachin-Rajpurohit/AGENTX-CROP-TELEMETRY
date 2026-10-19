@@ -1,0 +1,11 @@
+{
+  "tomato": {
+    "source": "FILL IN: TNAU Agritech Portal / ICAR link and page",
+    "ideal": { "N": null, "P": null, "K": null, "pH": null, "moisture": null },
+    "stages": {
+      "seedling": {},
+      "flowering": {},
+      "fruiting": {}
+    }
+  }
+}
