@@ -1,6 +1,23 @@
+# Node dependencies & build artifacts
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Environment variables & secrets (CRITICAL for GitHub Push Protection)
 .env
+.env.*
+!.env.example
+
+# Python cache & virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
 venv/
 .venv/
-__pycache__/
-*.pyc
 .ipynb_checkpoints/
+
+# AI Studio internal artifacts & OS files
+.aistudio/
+.DS_Store
+Thumbs.db

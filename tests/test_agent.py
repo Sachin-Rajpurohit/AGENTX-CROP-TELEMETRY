@@ -6,16 +6,16 @@ import sys
 import tempfile
 import unittest
 
-import pandas as pd
-
 # Fixture data folder. Set BEFORE importing tools so any module that reads the env at import time sees it.
 _FIXTURE = tempfile.mkdtemp()
-pd.DataFrame({"timestamp": pd.date_range("2026-10-01", periods=8), "moisture": [31, 29, 28, 27, 26, 24, 23, 22],
-              "N": [40] * 8, "P": [20] * 8, "K": [30] * 8}).to_csv(os.path.join(_FIXTURE, "soil_telemetry.csv"), index=False)
+with open(os.path.join(_FIXTURE, "soil_telemetry.csv"), "w", encoding="utf-8") as f:
+    f.write("timestamp,moisture,N,P,K,pH\n")
+    for i, m in enumerate([31, 29, 28, 27, 26, 24, 23, 22]):
+        f.write(f"2026-10-0{i+1} 08:00,{m},40,20,30,6.4\n")
 os.environ["AGENTX_DATA_DIR"] = _FIXTURE
 
-from agent.core import AgentExecutor, parse_json  # noqa: E402
-from tools import build_tools  # noqa: E402
+from agent.core import AgentExecutor, parse_json
+from tools import build_tools
 
 
 class Scripted:

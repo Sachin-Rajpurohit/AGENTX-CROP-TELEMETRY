@@ -1,4 +1,4 @@
-"""Entry point.
+"""Entry point for the AgentX Challenge evaluation harness.
   python main.py "your question"            human-readable run (shows Thought/Action/Observation)
   python main.py --json "your question"     machine output: ONE JSON line (the judges' harness uses this)
   python main.py --dry-run "anything"       test your setup without an API key
@@ -9,13 +9,15 @@ import json
 import os
 import sys
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
-load_dotenv()
-
-from agent.core import AgentExecutor  # noqa: E402
-from agent.llm import LLM, DryRunLLM  # noqa: E402
-from tools import build_tools  # noqa: E402
+from agent.core import AgentExecutor
+from agent.llm import LLM, DryRunLLM
+from tools import build_tools
 
 
 def run_agent(query, dry_run=False, verbose=False):
@@ -31,7 +33,7 @@ def main():
     a = ap.parse_args()
     try:
         answer, trace = run_agent(a.query, a.dry_run or bool(os.environ.get("AGENTX_DRY_RUN")), verbose=not a.json)
-    except Exception as e:  # never crash silently: always return a valid answer object
+    except Exception as e:
         answer, trace = f"Agent error: {type(e).__name__}: {e}", []
         print(answer, file=sys.stderr)
     if a.json:

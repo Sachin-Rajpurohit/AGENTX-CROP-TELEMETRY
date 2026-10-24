@@ -8,7 +8,7 @@ from agent.prompt_builder import build_system_prompt
 
 def parse_json(text):
     """Pull the first JSON object out of a model reply (handles ```json fences and chatter)."""
-    text = re.sub(r"```(?:json)?", "", text)
+    text = re.sub(r"```(?:json)?", "", str(text))
     start = text.find("{")
     while start != -1:
         depth = 0
@@ -44,10 +44,11 @@ class AgentExecutor:
                              {"role": "user", "content": "Invalid format. Reply with ONE JSON object with an \"action\" or a \"final_answer\"."}]
                 continue
             thought = str(data.get("thought", ""))
-            if "final_answer" in data and not trace and not nudged:
-                nudged = True  # an agent must ground its answer in at least one tool result
+            is_agri = bool(re.search(r'soil|crop|moisture|water|irrigat|fertiliz|npk|nitrogen|phosphor|potassium|urea|dap|ph|weather|rain|tomato|rice|paddy|maize|cotton|banana|groundnut|dose|acre|hectare|field|yield|spray', query, re.I))
+            if "final_answer" in data and not trace and not nudged and is_agri:
+                nudged = True
                 messages += [{"role": "assistant", "content": json.dumps(data)},
-                             {"role": "user", "content": "Do not answer from memory. Call list_files, then read the data with a tool first."}]
+                             {"role": "user", "content": "Do not answer from memory. Call get_soil_readings first."}]
                 continue
             if "final_answer" in data:
                 if verbose:
@@ -70,7 +71,7 @@ class AgentExecutor:
             return f"ERROR: unknown tool '{name}'. Available: {', '.join(self.tools)}"
         try:
             return str(tool.execute(**args))
-        except Exception as e:  # tool failures become observations, so the agent can recover
+        except Exception as e:
             return f"ERROR: {type(e).__name__}: {e}"
 
     def _wrap_up(self, messages):
