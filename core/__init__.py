@@ -1,0 +1,1 @@
+"""Core precision-agriculture analysis modules (pure Python, no LLM)."""

@@ -49,3 +49,26 @@ Rules:
 def build_system_prompt(tools, role=ROLE):
     docs = "\n".join(f"- {t.name}: {t.description} Args: {t.args_doc}" for t in tools.values())
     return SYSTEM_TEMPLATE.format(role=role, tool_docs=docs)
+
+
+# 1. Initialize TOOL_DESCRIPTIONS as a dictionary first
+TOOL_DESCRIPTIONS = {}
+
+TOOL_DESCRIPTIONS["tool_quality"] = "Check sensor quality. Returns score and issue codes. Uses core.quality.check_quality under the hood."
+TOOL_DESCRIPTIONS["tool_trends"] = "Analyze 7-day soil moisture and NPK trends. Uses core.trends.analyze_trends under the hood."
+TOOL_DESCRIPTIONS["tool_weather"] = "Get 48h rain risk from Open-Meteo. Uses core.weather.get_weather_risk under the hood."
+TOOL_DESCRIPTIONS["tool_dosage"] = "Compute fertilizer dose for N/P/K. Uses core.dosage.nutrient_dose under the hood."
+TOOL_DESCRIPTIONS["tool_irrigation"] = "Compute irrigation volume. Uses core.dosage.irrigation_litres under the hood."
+TOOL_DESCRIPTIONS["tool_rules"] = "Fire the cross-signal rule engine. Returns decision and reasons. Uses core.rules.fire_rules under the hood."
+TOOL_DESCRIPTIONS["tool_confidence"] = "Compute confidence score with deductions for flatline/gap/spike/weather/Missing NPK. Uses core.confidence.compute_score under the hood."
+
+# 2. Then build your list of tool info dictionaries using the populated dictionary
+TOOL_LIST = [
+    {"name": "tool_quality", "description": TOOL_DESCRIPTIONS["tool_quality"]},
+    {"name": "tool_trends", "description": TOOL_DESCRIPTIONS["tool_trends"]},
+    {"name": "tool_weather", "description": TOOL_DESCRIPTIONS["tool_weather"]},
+    {"name": "tool_dosage", "description": TOOL_DESCRIPTIONS["tool_dosage"]},
+    {"name": "tool_irrigation", "description": TOOL_DESCRIPTIONS["tool_irrigation"]},
+    {"name": "tool_rules", "description": TOOL_DESCRIPTIONS["tool_rules"]},
+    {"name": "tool_confidence", "description": TOOL_DESCRIPTIONS["tool_confidence"]},
+]
