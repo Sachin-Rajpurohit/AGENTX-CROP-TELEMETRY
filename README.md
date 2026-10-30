@@ -1,2 +1,62 @@
-# AGENTX-CROP-TELEMETRY
-# AgentX Crop Telemetry — AI Agricultural ReAct Advisory Engine An autonomous ReAct (Reasoning + Acting) agricultural intelligence and soil sensor telemetry advisory application tailored for crop stress, NPK dosage calculation, and precision irrigation management in Tamil Nadu, India.
+# AgentX Crop Telemetry — AI Agricultural ReAct Advisory Engine
+
+An autonomous ReAct (Reasoning + Acting) agricultural intelligence and soil sensor telemetry advisory application tailored for crop stress, NPK dosage calculation, and precision irrigation management in Tamil Nadu, India.
+
+Ported from Python to a high-performance **React + TypeScript + Vite + Tailwind CSS** web application.
+
+---
+
+## Key Features & Architecture
+
+### 1. Autonomous ReAct Agent Loop
+- **Cycle**: `Thought → Action → Observation → Decision`
+- **Loop Guards**:
+  - `MAX_ITERATIONS = 6`: Hard step limit protecting against infinite loops.
+  - `MAX_SAME_TOOL_CALLS = 2`: Repeat guard that forces synthesis of a final answer if tools are repeated.
+  - **Mandatory Grounding**: Agent is forbidden from answering from memory alone; it must ground conclusions in sensor telemetry and agronomic tools first.
+- **Bilingual Decision Output**:
+  - **URGENCY**: `GREEN` (No immediate action), `YELLOW` (Act within 2–3 days), `RED` (Act today).
+  - **English Advice**: Plain, concise agricultural recommendations referencing exact numbers.
+  - **Tamil Advice (தமிழ் ஆலோசனை)**: Culturally accessible, actionable guidance for Tamil Nadu farmers.
+  - **Agronomic Disclaimer**: "Estimate only. Confirm with a local agriculture officer."
+
+### 2. Full Suite of Agronomic Tools
+- **`get_soil_readings`**: Aggregates recent root-zone telemetry (mean and latest values for Moisture, N, P, K, pH, Temperature, Humidity, Rainfall).
+- **`analyze_trend`**: Evaluates column dynamics using linear regression slope analysis (`falling`, `rising`, or `stable`). Enforces minimum 3 readings rule.
+- **`get_weather_forecast`**: Live Open-Meteo 3-day precipitation probability (%) and rain accumulation (mm) for Tiruchirappalli coordinates (`10.79° N, 78.70° E`). Automatically flags rain $\ge$ 60% within 48h to prevent fertilizer wash-off.
+- **`get_crop_requirements`**: Grounded database based on Tamil Nadu Agricultural University (TNAU) Agritech Portal and ICAR for Tomato, Rice, Maize, Cotton, Banana, and Groundnut across growth stages (seedling, vegetative, flowering, fruiting).
+- **`calculate_dosage`**: Calculates exact fertilizer deficit (kg/ha) converted to safe capped dose (kg/acre) with a 60 kg/acre safety cap, and irrigation depth (mm) converted to litres per acre using root zone modeling (300 mm depth).
+- **`calculator`**: Safe arithmetic evaluation.
+- **`list_files`**, **`read_file`**, **`sql_query`**: In-browser dataset querying and SQL-like filtering on `soil_telemetry.csv`, `tomato irrigation dataset.csv`, and `Crop_recommendation.csv`.
+
+### 3. Judges' JSON Contract Output
+- Implements the exact automated evaluation harness contract:
+  ```json
+  {
+    "answer": "URGENCY: RED\nADVICE: ...\nஆலோசனை: ...\nEstimate only. Confirm with a local agriculture officer.",
+    "trace": [
+      {
+        "thought": "...",
+        "tool": "get_soil_readings",
+        "args": { "days": 7 },
+        "observation": "..."
+      }
+    ]
+  }
+  ```
+- Includes one-click JSON copy and export.
+
+---
+
+## Development & Build
+
+```bash
+# Install dependencies
+npm install
+
+# Start development server on port 3000
+npm run dev
+
+# Build production bundle
+npm run build
+```

@@ -1,0 +1,30 @@
+{
+  "tomato": {
+    "source": "TNAU Agritech Portal & ICAR-IIHR Bangalore",
+    "ideal": { "N": 75, "P": 40, "K": 50, "pH": 6.5, "moisture": 65 },
+    "stages": {
+      "seedling": { "moisture": 70, "N": 40, "P": 50, "K": 30 },
+      "vegetative": { "moisture": 65, "N": 75, "P": 40, "K": 50 },
+      "flowering": { "moisture": 65, "N": 100, "P": 50, "K": 60 },
+      "fruiting": { "moisture": 60, "N": 120, "P": 60, "K": 75 }
+    }
+  },
+  "rice": {
+    "source": "TNAU Agritech Portal & ICAR-NRRI Cuttack",
+    "ideal": { "N": 100, "P": 50, "K": 50, "pH": 6.5, "moisture": 80 },
+    "stages": {
+      "seedling": { "moisture": 85, "N": 40, "P": 40, "K": 30 },
+      "tillering": { "moisture": 80, "N": 80, "P": 40, "K": 40 },
+      "flowering": { "moisture": 80, "N": 100, "P": 50, "K": 50 },
+      "ripening": { "moisture": 60, "N": 60, "P": 30, "K": 40 }
+    }
+  },
+  "maize": {
+    "source": "TNAU Agritech Portal & ICAR-IIMR",
+    "ideal": { "N": 120, "P": 60, "K": 50, "pH": 6.8, "moisture": 60 }
+  },
+  "cotton": {
+    "source": "TNAU Agritech Portal & ICAR-CICR Nagpur",
+    "ideal": { "N": 80, "P": 40, "K": 40, "pH": 7.2, "moisture": 55 }
+  }
+}

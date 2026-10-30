@@ -1,0 +1,9 @@
+{
+  "name": "AgentX Crop Telemetry",
+  "description": "Real-time soil sensor telemetry, 7-day moisture trend analysis, rainfall risk forecasting, and precision NPK dosage calculations for farmers in Tamil Nadu.",
+  "version": "1.0.0",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
