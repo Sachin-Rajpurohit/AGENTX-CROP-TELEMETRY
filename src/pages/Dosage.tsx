@@ -4,6 +4,7 @@ import { api, type Advice } from '../api';
 import { cropName, useCrops } from '../crops';
 import { usePersistedState } from '../persist';
 import { useFarms } from '../farmStore';
+import { UNITS, fromAcres, toAcres, type Unit } from './Farms';
 import {
   AdviceCard,
   ErrorNote,
@@ -217,6 +218,7 @@ export default function Dosage() {
   const [crop, setCrop] = usePersistedState('uzhavan-dose-crop', 'tomato');
   const [stage, setStage] = usePersistedState('uzhavan-dose-stage', '');
   const [area, setArea] = usePersistedState('uzhavan-dose-area', '1');
+  const [unit, setUnit] = usePersistedState<Unit>('uzhavan-dose-unit', 'acre');
   const [irrigation, setIrrigation] = usePersistedState('uzhavan-dose-irrigation', 'drip');
   const [soil, setSoil] = usePersistedState('uzhavan-dose-soil', 'clay_loam');
   const [savedSource, setSource] = usePersistedState<Source | 'sample'>('uzhavan-dose-source', 'farm');
@@ -236,7 +238,8 @@ export default function Dosage() {
     const form = new FormData();
     form.set('crop', crop);
     if (stage) form.set('stage', stage);
-    form.set('area_acres', area);
+    if (!(Number(area) > 0)) return setError('Enter the field size.');
+    form.set('area_acres', String(+toAcres(Number(area), unit).toFixed(4)));
     form.set('irrigation', flooded ? 'flood' : irrigation);
     form.set('soil', soil);
     if (farm) form.set('farm_id', farm.id);  // the farm's location is used for the weather
@@ -283,7 +286,8 @@ export default function Dosage() {
             onClick={() => {
               setCrop(farm.crop);
               setStage(farm.stage ?? '');
-              setArea(String(farm.area_acres));
+              setUnit(farm.area_unit ?? 'acre');
+              setArea(String(+fromAcres(farm.area_acres, farm.area_unit ?? 'acre').toFixed(2)));
               setIrrigation(farm.irrigation);
               setSoil(farm.soil);
               setSource('farm');
@@ -328,16 +332,34 @@ export default function Dosage() {
           )}
         </Field>
 
-        <Field label="Field size (acres)" ta="நில அளவு (ஏக்கர்)">
-          <input
-            className={inputCls}
-            type="number"
-            min="0.1"
-            step="0.1"
-            value={area}
-            onChange={(e) => setArea(e.target.value)}
-            required
-          />
+        <Field label="Field size" ta="நில அளவு">
+          <div className="flex gap-2">
+            <input
+              className={inputCls}
+              type="number"
+              min="0.01"
+              step="any"
+              value={area}
+              onChange={(e) => setArea(e.target.value)}
+              required
+            />
+            <select
+              className={`${inputCls} w-44 shrink-0`}
+              value={unit}
+              onChange={(e) => {
+                const next = e.target.value as Unit;
+                if (Number(area) > 0) setArea(String(+fromAcres(toAcres(Number(area), unit), next).toFixed(2)));
+                setUnit(next);
+              }}
+              aria-label="Unit"
+            >
+              {UNITS.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.en} – {u.ta}
+                </option>
+              ))}
+            </select>
+          </div>
         </Field>
 
         <Field label="Watering method" ta="பாசன முறை">

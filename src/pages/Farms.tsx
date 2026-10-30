@@ -9,14 +9,14 @@ import { loadFarms, selectFarm, useFarms } from '../farmStore';
 const inputCls =
   'w-full rounded-xl border border-soil-300 bg-white px-3 py-2.5 text-lg focus:border-leaf-700 focus:outline-none focus:ring-2 focus:ring-leaf-200';
 
-type Unit = Farm['area_unit'];
-const UNITS: { id: Unit; en: string; ta: string; perAcre: number }[] = [
+export type Unit = Farm['area_unit'];
+export const UNITS: { id: Unit; en: string; ta: string; perAcre: number }[] = [
   { id: 'acre', en: 'Acres', ta: 'ஏக்கர்', perAcre: 1 },
   { id: 'cent', en: 'Cents', ta: 'சென்ட்', perAcre: 100 },
   { id: 'hectare', en: 'Hectares', ta: 'ஹெக்டேர்', perAcre: 0.404686 },
 ];
-const toAcres = (value: number, unit: Unit) => value / UNITS.find((u) => u.id === unit)!.perAcre;
-const fromAcres = (acres: number, unit: Unit) => acres * UNITS.find((u) => u.id === unit)!.perAcre;
+export const toAcres = (value: number, unit: Unit) => value / UNITS.find((u) => u.id === unit)!.perAcre;
+export const fromAcres = (acres: number, unit: Unit) => acres * UNITS.find((u) => u.id === unit)!.perAcre;
 const today = () => new Date().toISOString().slice(0, 10);
 
 export function farmSize(farm: Farm) {
@@ -147,7 +147,17 @@ function FarmForm({ initial, crops, onDone }: { initial: Farm | null; crops: Cro
               <input className={`${inputCls} pl-10`} type="number" min="0.01" step="any" value={size}
                 onChange={(e) => setSize(e.target.value)} placeholder="e.g. 2" required />
             </div>
-            <select className={`${inputCls} w-36`} value={unit} onChange={(e) => setUnit(e.target.value as Unit)} aria-label="Unit">
+            <select
+              className={`${inputCls} w-48 shrink-0`}
+              value={unit}
+              onChange={(e) => {
+                // Keep the same land: convert the number into the new unit.
+                const next = e.target.value as Unit;
+                if (Number(size) > 0) setSize(String(+fromAcres(toAcres(Number(size), unit), next).toFixed(2)));
+                setUnit(next);
+              }}
+              aria-label="Unit"
+            >
               {UNITS.map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.en} – {u.ta}
