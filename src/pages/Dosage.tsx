@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import { ChevronDown, Droplets, FlaskConical, Gauge, Leaf, Sprout } from 'lucide-react';
+import { ChevronDown, Droplets, FlaskConical, Gauge, Leaf, RotateCcw, Sprout } from 'lucide-react';
 import { api, type Advice, type Crops } from '../api';
+import { usePersistedState } from '../persist';
 import {
   AdviceCard,
   CROP_LABEL,
@@ -210,15 +211,17 @@ export function AdviceResult({ advice }: { advice: Advice }) {
 
 export default function Dosage() {
   const [crops, setCrops] = useState<Crops | null>(null);
-  const [crop, setCrop] = useState('tomato');
-  const [stage, setStage] = useState('');
-  const [area, setArea] = useState('1');
-  const [irrigation, setIrrigation] = useState('drip');
-  const [soil, setSoil] = useState('clay_loam');
-  const [source, setSource] = useState<Source>('sample');
-  const [manual, setManual] = useState({ moisture: '', n: '', p: '', k: '' });
+  // Form choices and the last result are saved, so they survive page switches and refreshes.
+  // The CSV file itself cannot be saved, so an upload must be chosen again after leaving.
+  const [crop, setCrop] = usePersistedState('uzhavan-dose-crop', 'tomato');
+  const [stage, setStage] = usePersistedState('uzhavan-dose-stage', '');
+  const [area, setArea] = usePersistedState('uzhavan-dose-area', '1');
+  const [irrigation, setIrrigation] = usePersistedState('uzhavan-dose-irrigation', 'drip');
+  const [soil, setSoil] = usePersistedState('uzhavan-dose-soil', 'clay_loam');
+  const [source, setSource] = usePersistedState<Source>('uzhavan-dose-source', 'sample');
+  const [manual, setManual] = usePersistedState('uzhavan-dose-manual', { moisture: '', n: '', p: '', k: '' });
   const [file, setFile] = useState<File | null>(null);
-  const [advice, setAdvice] = useState<Advice | null>(null);
+  const [result, setResult] = usePersistedState<{ advice: Advice; at: string } | null>('uzhavan-dose-result', null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -248,10 +251,10 @@ export default function Dosage() {
     setBusy(true);
     setError('');
     try {
-      setAdvice(await api.advice(form));
+      setResult({ advice: await api.advice(form), at: new Date().toISOString() });
     } catch (err) {
       setError((err as Error).message);
-      setAdvice(null);
+      setResult(null);
     } finally {
       setBusy(false);
     }
@@ -391,7 +394,25 @@ export default function Dosage() {
 
       {error && <ErrorNote message={error} />}
       {busy && <Spinner label="Checking soil trend, weather and doses…" />}
-      {advice && !busy && <AdviceResult advice={advice} />}
+      {result && !busy && (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-soil-700">
+            <span>
+              Result for {CROP_LABEL[result.advice.crop]?.en ?? result.advice.crop}, calculated at{' '}
+              {new Date(result.at).toLocaleString('en-IN', { hour: 'numeric', minute: '2-digit', day: 'numeric', month: 'short' })}
+              . Calculate again for the latest weather.
+            </span>
+            <button
+              type="button"
+              onClick={() => setResult(null)}
+              className="flex items-center gap-1.5 rounded-full border border-soil-300 bg-white px-3 py-1.5 font-semibold text-soil-700 hover:bg-soil-100"
+            >
+              <RotateCcw className="h-4 w-4" aria-hidden /> Clear · <span className="tamil">அழி</span>
+            </button>
+          </div>
+          <AdviceResult advice={result.advice} />
+        </div>
+      )}
     </div>
   );
 }
