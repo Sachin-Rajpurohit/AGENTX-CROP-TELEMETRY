@@ -9,11 +9,14 @@ Endpoints:
   GET  /api/crop-fit?N=..&P=..&K=..       which of 22 crops suit these soil/climate readings (Kaggle data)
   POST /api/advice                        multipart form, see api_advice() for fields
   GET  /api/voice?text=...&lang=en|ta     spoken advisory as audio/mpeg (needs gTTS + internet)
+  GET  /api/weather?lat=..&lon=..         5-day forecast and 48h rain/heat risk
+  POST /api/chat  {"message": "..."}       the same ReAct agent as `python main.py`, answer parsed for display
 """
 from __future__ import annotations
 
 import io
 import os
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -21,12 +24,15 @@ import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+from pydantic import BaseModel, Field
 
 from agent.advisor import run_advisory
 from config import DATA_DIR
 from config.agronomy import crop_stages, load_agronomy
 from core.crop_fit import crop_fit
 from core.dosage import IRRIGATION_METHODS
+from core.weather import get_daily_forecast
+from main import run_agent
 
 SAMPLE_CSV_PATH = Path(DATA_DIR) / "soil_telemetry.csv"
 MAX_CSV_BYTES = 2 * 1024 * 1024
@@ -80,7 +86,50 @@ def api_health():
 @app.get("/api/sample")
 def api_sample():
     """Bundled sample telemetry and the default form parameters."""
-    return {"csv": SAMPLE_CSV_PATH.read_text(encoding="utf-8"), "metadata": _defaults()}
+    rows = pd.read_csv(SAMPLE_CSV_PATH).to_dict(orient="records")
+    return {"csv": SAMPLE_CSV_PATH.read_text(encoding="utf-8"), "rows": rows, "metadata": _defaults()}
+
+
+@app.get("/api/weather")
+def api_weather(lat: float | None = None, lon: float | None = None):
+    """Day-by-day forecast plus which advisory rules the next 48-72 h would trigger."""
+    d, cfg = _defaults(), load_agronomy()
+    forecast = get_daily_forecast(d["lat"] if lat is None else lat, d["lon"] if lon is None else lon)
+    risk = forecast["risk"]
+    forecast["effects"] = {
+        "skip_irrigation": risk["rain_mm_48h"] >= cfg["rain_skip_threshold_mm"]
+        and risk["rain_prob_48h"] >= cfg["rain_skip_prob_pct"],
+        "delay_fertilizer": risk["rain_mm_48h"] >= cfg["rain_delay_threshold_mm"],
+        "irrigate_at_dawn": risk["tmax_next3"] >= cfg["heat_threshold_c"],
+        "thresholds": {k: cfg[k] for k in ("rain_skip_threshold_mm", "rain_skip_prob_pct",
+                                           "rain_delay_threshold_mm", "heat_threshold_c")},
+    }
+    return forecast
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=500)
+
+
+def _parse_answer(answer: str) -> dict:
+    """Split the agent's URGENCY / ADVICE / ஆலோசனை / disclaimer answer into fields for display."""
+    def field(label):
+        m = re.search(rf"^{label}:\s*(.*?)(?=^\S+:|^Estimate only|\Z)", answer, re.MULTILINE | re.DOTALL)
+        return m.group(1).strip() if m else None
+    urgency = field("URGENCY")
+    return {
+        "urgency": urgency.split()[0].strip(",.") if urgency else None,
+        "advice_en": field("ADVICE"),
+        "advice_ta": field("ஆலோசனை"),
+        "disclaimer": "Estimate only. Confirm with a local agriculture officer." if "Estimate only" in answer else None,
+    }
+
+
+@app.post("/api/chat")
+def api_chat(body: ChatRequest):
+    """One question in, the agent's answer and full Thought/Action/Observation trace out."""
+    answer, trace = run_agent(body.message)
+    return {"answer": answer, "parsed": _parse_answer(answer), "trace": trace}
 
 
 @app.get("/api/crops")
@@ -116,6 +165,7 @@ def api_advice(
     lat: float | None = Form(None),
     lon: float | None = Form(None),
     crop: str | None = Form(None),
+    stage: str | None = Form(None),
     soil: str | None = Form(None),
 ):
     """Advisory from telemetry. Data source, in order: uploaded CSV, manual readings
@@ -143,6 +193,7 @@ def api_advice(
             lat=d["lat"] if lat is None else lat,
             lon=d["lon"] if lon is None else lon,
             crop=crop,
+            stage=stage or None,
             soil=soil or d["soil"],
         )
     except ValueError as e:

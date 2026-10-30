@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import asdict
+from datetime import date, timedelta
 from pathlib import Path
 
 import requests
@@ -72,21 +74,49 @@ def get_weather_risk(
     disk cache, or ``source='fallback'`` with a dry conservative fixture when
     the API is unreachable.  A fallback source must lower confidence downstream.
     """
+    return _build_risk(*_fetch_daily(lat, lon, days, cache_dir))
+
+
+def get_daily_forecast(
+    lat: float = DEFAULT_LAT,
+    lon: float = DEFAULT_LON,
+    days: int = DEFAULT_DAYS,
+    cache_dir: str | Path = ".cache/weather",
+) -> dict:
+    """Day-by-day rain, rain probability and max temperature plus the 48h risk summary,
+    from the same cache / live API / fallback as get_weather_risk."""
+    daily, source = _fetch_daily(lat, lon, days, cache_dir)
+    n = days_if_present(daily)
+    dates = list(daily.get("time", []))[:n] or [str(date.today() + timedelta(days=i)) for i in range(n)]
+
+    def col(key, i):
+        vals = daily.get(key, [])
+        return float(vals[i]) if i < len(vals) and vals[i] is not None else 0.0
+
+    return {
+        "source": source,
+        "risk": asdict(_build_risk(daily, source)),
+        "days": [{"date": dates[i], "rain_mm": col("precipitation_sum", i),
+                  "rain_prob": col("precipitation_probability_max", i), "tmax": col("temperature_2m_max", i)}
+                 for i in range(n)],
+    }
+
+
+def _fetch_daily(lat: float, lon: float, days: int, cache_dir: str | Path) -> tuple[dict, str]:
+    """(Open-Meteo `daily` block, source). Never raises: falls back to a dry fixture."""
     path = _cache_path(cache_dir, lat, lon)
     cached = _read_cache(path)
     if cached is not None:
-        return _build_risk(cached, "cache")
-
+        return cached, "cache"
     try:
         url = _OPEN_METEO_URL.format(lat=lat, lon=lon, days=days)
         resp = requests.get(url, timeout=TIMEOUT_S)
         resp.raise_for_status()
-        payload = resp.json()
-        daily = payload.get("daily", {})
+        daily = resp.json().get("daily", {})
         _write_cache(path, daily)
-        return _build_risk(daily, "live")
+        return daily, "live"
     except Exception:  # noqa: BLE001 — intentional fallback on any API failure
-        return _build_risk(_FALLBACK, "fallback")
+        return _FALLBACK, "fallback"
 
 
 def _build_risk(daily: dict, source: str) -> schema.WeatherRisk:

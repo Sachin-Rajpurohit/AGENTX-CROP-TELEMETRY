@@ -1,27 +1,50 @@
 @import "tailwindcss";
 
+/* Palette: white, soil brown and leaf green. Urgency keeps muted red / amber for safety. */
+@theme {
+  --font-sans: "Noto Sans", "Noto Sans Tamil", system-ui, sans-serif;
+  --font-tamil: "Noto Sans Tamil", "Noto Sans", sans-serif;
+
+  --color-soil-900: #3b2a1d;
+  --color-soil-800: #4e3626;
+  --color-soil-700: #6b4423;
+  --color-soil-500: #9c6b3f;
+  --color-soil-300: #d4b896;
+  --color-soil-200: #e8d9c4;
+  --color-soil-100: #f3ebdf;
+  --color-soil-50: #faf6f0;
+
+  --color-leaf-900: #17421f;
+  --color-leaf-800: #1f5a2a;
+  --color-leaf-700: #2e7d32;
+  --color-leaf-600: #3b8f41;
+  --color-leaf-200: #c6e3c8;
+  --color-leaf-100: #e3f1e3;
+  --color-leaf-50: #f2f8f2;
+
+  --color-alert-700: #a3261c;
+  --color-alert-100: #fbe6e3;
+  --color-warn-700: #96600f;
+  --color-warn-100: #fbf0d9;
+}
+
 @layer base {
-  body {
-    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  html {
+    font-size: 17px;
   }
-  
-  code, pre, .font-mono {
-    font-family: 'JetBrains Mono', monospace;
+  body {
+    @apply bg-soil-50 text-soil-900 antialiased;
+  }
+  button, select, input {
+    font: inherit;
   }
 }
 
-/* Custom scrollbars for telemetry logs and traces */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+.tamil {
+  font-family: var(--font-tamil);
+  line-height: 1.8;
 }
-::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.6);
-}
-::-webkit-scrollbar-thumb {
-  background: rgba(51, 65, 85, 0.8);
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(71, 85, 105, 1);
+
+.card {
+  @apply rounded-2xl border border-soil-200 bg-white shadow-sm;
 }

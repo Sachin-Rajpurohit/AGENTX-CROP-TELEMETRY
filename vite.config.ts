@@ -2,22 +2,23 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
-// https://vitejs.dev/config/
+// The UI talks only to the FastAPI backend (python server.py, port 8000) through /api.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  define: {
-    '__GROQ_API_KEY__': JSON.stringify(process.env.GROQ_API_KEY || ''),
-  },
   server: {
     host: '0.0.0.0',
     port: 3000,
     strictPort: true,
-    hmr: false,
-    cors: true,
+    proxy: {
+      '/api': 'http://127.0.0.1:8000',
+    },
   },
   preview: {
     host: '0.0.0.0',
     port: 3000,
     strictPort: true,
+    proxy: {
+      '/api': 'http://127.0.0.1:8000',
+    },
   },
 });
