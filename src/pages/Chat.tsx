@@ -1,12 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { SendHorizontal, Sprout, User } from 'lucide-react';
-import { api, type ChatReply } from '../api';
+import { RotateCcw, SendHorizontal, Sprout, User } from 'lucide-react';
+import type { ChatReply } from '../api';
+import { clearChat, sendMessage, useChat } from '../chatStore';
 import { AdviceCard, ErrorNote, Spinner, TraceSteps, UrgencyChip } from '../components/ui';
-
-type Message =
-  | { role: 'user'; text: string }
-  | { role: 'bot'; reply: ChatReply }
-  | { role: 'error'; text: string };
 
 const SUGGESTIONS = [
   'Should I irrigate my 1 acre tomato field today?',
@@ -69,40 +65,41 @@ function BotReply({ reply }: { reply: ChatReply }) {
 }
 
 export default function Chat() {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const { messages, busy } = useChat();
   const [input, setInput] = useState('');
-  const [busy, setBusy] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [messages, busy]);
 
-  const send = async (text: string) => {
-    const q = text.trim();
-    if (!q || busy) return;
+  const send = (text: string) => {
+    if (!text.trim() || busy) return;
     setInput('');
-    setMessages((m) => [...m, { role: 'user', text: q }]);
-    setBusy(true);
-    try {
-      const reply = await api.chat(q);
-      setMessages((m) => [...m, { role: 'bot', reply }]);
-    } catch (e) {
-      setMessages((m) => [...m, { role: 'error', text: (e as Error).message }]);
-    } finally {
-      setBusy(false);
-    }
+    sendMessage(text);
   };
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-4">
-      <div>
-        <h1 className="text-2xl font-extrabold text-soil-900">
-          Ask Uzhavan <span className="tamil text-xl text-leaf-700">· உழவனிடம் கேளுங்கள்</span>
-        </h1>
-        <p className="text-soil-700">
-          Same advisor as the command line: it reads your sensor data, checks the weather and computes doses.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-extrabold text-soil-900">
+            Ask Uzhavan <span className="tamil text-xl text-leaf-700">· உழவனிடம் கேளுங்கள்</span>
+          </h1>
+          <p className="text-soil-700">
+            Same advisor as the command line: it reads your sensor data, checks the weather and computes doses.
+          </p>
+        </div>
+        {messages.length > 0 && (
+          <button
+            type="button"
+            onClick={clearChat}
+            disabled={busy}
+            className="flex items-center gap-2 rounded-full border border-soil-300 bg-white px-4 py-2 text-sm font-semibold text-soil-700 hover:bg-soil-100 disabled:opacity-50"
+          >
+            <RotateCcw className="h-4 w-4" aria-hidden /> New chat · <span className="tamil">புதிய உரையாடல்</span>
+          </button>
+        )}
       </div>
 
       <div className="space-y-4">
