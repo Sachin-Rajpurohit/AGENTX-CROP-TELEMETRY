@@ -1,6 +1,7 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
-import { CalendarDays, CheckCircle2, Download, MapPin, Pencil, Plus, Ruler, Trash2, Upload } from 'lucide-react';
+import { CalendarDays, CheckCircle2, Download, MapPin, Pencil, Plus, Trash2, Upload } from 'lucide-react';
 import { api, type Crops, type Farm, type FarmInput, type Place } from '../api';
+import AreaInput, { UNITS, fromAcres, toAcres, type Unit } from '../components/AreaInput';
 import LocationPicker from '../components/LocationPicker';
 import { ErrorNote, SOIL_LABEL, STAGE_LABEL, Spinner, fmt } from '../components/ui';
 import { cropName, cropTamil, useCrops } from '../crops';
@@ -9,14 +10,6 @@ import { loadFarms, selectFarm, useFarms } from '../farmStore';
 const inputCls =
   'w-full rounded-xl border border-soil-300 bg-white px-3 py-2.5 text-lg focus:border-leaf-700 focus:outline-none focus:ring-2 focus:ring-leaf-200';
 
-export type Unit = Farm['area_unit'];
-export const UNITS: { id: Unit; en: string; ta: string; perAcre: number }[] = [
-  { id: 'acre', en: 'Acres', ta: 'ஏக்கர்', perAcre: 1 },
-  { id: 'cent', en: 'Cents', ta: 'சென்ட்', perAcre: 100 },
-  { id: 'hectare', en: 'Hectares', ta: 'ஹெக்டேர்', perAcre: 0.404686 },
-];
-export const toAcres = (value: number, unit: Unit) => value / UNITS.find((u) => u.id === unit)!.perAcre;
-export const fromAcres = (acres: number, unit: Unit) => acres * UNITS.find((u) => u.id === unit)!.perAcre;
 const today = () => new Date().toISOString().slice(0, 10);
 
 export function farmSize(farm: Farm) {
@@ -141,30 +134,7 @@ function FarmForm({ initial, crops, onDone }: { initial: Farm | null; crops: Cro
         </Field>
 
         <Field label="Farm size" ta="நில அளவு">
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <Ruler className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-soil-500" aria-hidden />
-              <input className={`${inputCls} pl-10`} type="number" min="0.01" step="any" value={size}
-                onChange={(e) => setSize(e.target.value)} placeholder="e.g. 2" required />
-            </div>
-            <select
-              className={`${inputCls} w-48 shrink-0`}
-              value={unit}
-              onChange={(e) => {
-                // Keep the same land: convert the number into the new unit.
-                const next = e.target.value as Unit;
-                if (Number(size) > 0) setSize(String(+fromAcres(toAcres(Number(size), unit), next).toFixed(2)));
-                setUnit(next);
-              }}
-              aria-label="Unit"
-            >
-              {UNITS.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.en} – {u.ta}
-                </option>
-              ))}
-            </select>
-          </div>
+          <AreaInput value={size} unit={unit} onChange={(v, u) => { setSize(v); setUnit(u); }} />
         </Field>
 
         <Field label="Watering method" ta="பாசன முறை">

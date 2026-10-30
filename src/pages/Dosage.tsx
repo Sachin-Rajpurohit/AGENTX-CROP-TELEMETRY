@@ -4,7 +4,7 @@ import { api, type Advice } from '../api';
 import { cropName, useCrops } from '../crops';
 import { usePersistedState } from '../persist';
 import { useFarms } from '../farmStore';
-import { UNITS, fromAcres, toAcres, type Unit } from './Farms';
+import AreaInput, { fromAcres, toAcres, type Unit } from '../components/AreaInput';
 import {
   AdviceCard,
   ErrorNote,
@@ -332,35 +332,13 @@ export default function Dosage() {
           )}
         </Field>
 
-        <Field label="Field size" ta="நில அளவு">
-          <div className="flex gap-2">
-            <input
-              className={inputCls}
-              type="number"
-              min="0.01"
-              step="any"
-              value={area}
-              onChange={(e) => setArea(e.target.value)}
-              required
-            />
-            <select
-              className={`${inputCls} w-44 shrink-0`}
-              value={unit}
-              onChange={(e) => {
-                const next = e.target.value as Unit;
-                if (Number(area) > 0) setArea(String(+fromAcres(toAcres(Number(area), unit), next).toFixed(2)));
-                setUnit(next);
-              }}
-              aria-label="Unit"
-            >
-              {UNITS.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.en} – {u.ta}
-                </option>
-              ))}
-            </select>
-          </div>
-        </Field>
+        <div>
+          {/* Not a <label>: it holds the unit buttons as well as the number box. */}
+          <span className="mb-1 block font-semibold text-soil-800">
+            Field size <span className="tamil text-sm font-medium text-soil-500">· நில அளவு</span>
+          </span>
+          <AreaInput value={area} unit={unit} onChange={(v, u) => { setArea(v); setUnit(u); }} />
+        </div>
 
         <Field label="Watering method" ta="பாசன முறை">
           {flooded ? (
