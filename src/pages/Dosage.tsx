@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { ChevronDown, Droplets, FlaskConical, Gauge, Leaf, RotateCcw, Sprout } from 'lucide-react';
 import { api, type Advice, type Crops } from '../api';
 import { usePersistedState } from '../persist';
+import { useFarms } from '../farmStore';
 import {
   AdviceCard,
   CROP_LABEL,
@@ -14,7 +15,7 @@ import {
 } from '../components/ui';
 
 const BAG_KG = 50;
-type Source = 'sample' | 'manual' | 'upload';
+type Source = 'farm' | 'manual' | 'upload';
 
 function Field({ label, ta, children }: { label: string; ta?: string; children: ReactNode }) {
   return (
@@ -218,7 +219,9 @@ export default function Dosage() {
   const [area, setArea] = usePersistedState('uzhavan-dose-area', '1');
   const [irrigation, setIrrigation] = usePersistedState('uzhavan-dose-irrigation', 'drip');
   const [soil, setSoil] = usePersistedState('uzhavan-dose-soil', 'clay_loam');
-  const [source, setSource] = usePersistedState<Source>('uzhavan-dose-source', 'sample');
+  const [savedSource, setSource] = usePersistedState<Source | 'sample'>('uzhavan-dose-source', 'farm');
+  const source: Source = savedSource === 'sample' ? 'farm' : savedSource;  // 'sample' was the old name
+  const { selected: farm } = useFarms();
   const [manual, setManual] = usePersistedState('uzhavan-dose-manual', { moisture: '', n: '', p: '', k: '' });
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = usePersistedState<{ advice: Advice; at: string } | null>('uzhavan-dose-result', null);
@@ -240,6 +243,11 @@ export default function Dosage() {
     form.set('area_acres', area);
     form.set('irrigation', flooded ? 'flood' : irrigation);
     form.set('soil', soil);
+    if (farm) form.set('farm_id', farm.id);  // the farm's location is used for the weather
+    if (source === 'farm') {
+      if (!farm) return setError('Add a farm on the Farms page first, or type readings yourself.');
+      if (!farm.has_telemetry) return setError(`${farm.name} has no sensor data yet. Upload a CSV on the Farms page.`);
+    }
     if (source === 'manual') {
       if (!manual.moisture) return setError('Enter at least the soil moisture.');
       Object.entries(manual).forEach(([k, v]) => v && form.set(k, v));
@@ -268,6 +276,28 @@ export default function Dosage() {
         </h1>
         <p className="text-soil-700">Tell us about your field. We compute the exact water and fertilizer for it.</p>
       </div>
+
+      {farm && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-leaf-50 px-4 py-3">
+          <p className="text-leaf-800">
+            Farm: <b>{farm.name}</b> · {farm.location.name}
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setCrop(farm.crop);
+              setStage(farm.stage ?? '');
+              setArea(String(farm.area_acres));
+              setIrrigation(farm.irrigation);
+              setSoil(farm.soil);
+              setSource('farm');
+            }}
+            className="rounded-full border border-leaf-700 bg-white px-4 py-1.5 text-sm font-bold text-leaf-800 hover:bg-leaf-100"
+          >
+            Fill from my farm · <span className="tamil">என் வயல்</span>
+          </button>
+        </div>
+      )}
 
       <form onSubmit={submit} className="card grid gap-4 p-4 sm:grid-cols-2 lg:grid-cols-3">
         <Field label="Crop" ta="பயிர்">
@@ -337,7 +367,7 @@ export default function Dosage() {
 
         <Field label="Sensor data" ta="சென்சார் தரவு">
           <select className={inputCls} value={source} onChange={(e) => setSource(e.target.value as Source)}>
-            <option value="sample">Use my farm sensor (sample data)</option>
+            <option value="farm">{farm ? `${farm.name} sensor data` : 'My farm sensor data'}</option>
             <option value="manual">Type readings myself</option>
             <option value="upload">Upload a CSV file</option>
           </select>

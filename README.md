@@ -10,7 +10,7 @@ Built for the AgentX Challenge, *Precision Agriculture* track, for tomato, rice,
 | Compute exact fertilizer / water dosage | Litres of water for the field today, and urea, DAP and MOP in kg for the field's area |
 | Advice in simple regional language or English | Every answer in **Tamil and English**, with an URGENCY level and voice playback |
 
-Input: `data/soil_telemetry.csv` (8 daily readings from a tomato field), or any CSV you upload, or readings typed in.
+Input: each farm's own sensor CSV (the demo farm uses `data/soil_telemetry.csv`, 8 daily readings from a tomato field), or readings typed in.
 
 ---
 
@@ -23,6 +23,8 @@ python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt      # macOS/Linux: .venv/bin/pip
 npm install
 ```
+
+`requirements.txt` lists every Python package needed to run the agent, the API and the tests (checked with a fresh install); `npm install` installs the web app's packages.
 
 Create a `.env` file with your Gemini key (used only by the chat agent):
 
@@ -129,14 +131,15 @@ All constants live in `config/agronomy.yaml`. Each one names its source or is ta
 
 ## Web app
 
-White, soil-brown and leaf-green, with large text and Tamil beside every heading. On phones, navigation moves to a bottom tab bar.
+White, soil-brown and leaf-green, with large text and Tamil beside every heading. On phones, navigation moves to a bottom tab bar. A farm switcher in the header chooses which field every page is about.
 
 | Page | What it shows |
 |---|---|
-| **My Farm** | Today's advice as a big urgency banner, Tamil and English advice with 🔊 listen buttons, latest sensor readings, and a 7-day moisture chart with the "water below" line |
+| **My Farm** | For the selected farm: today's advice as a big urgency banner, Tamil and English advice with 🔊 listen buttons, latest sensor readings, and a 7-day moisture chart with the "water below" line |
 | **Ask Uzhavan** | Chat with a bilingual welcome message. Runs the same agent as `python main.py`; answers show the urgency, Tamil and English advice, and "How I worked this out" (the Thought / Action / Observation steps). History is kept across page switches and refreshes. |
 | **Dose Calculator** | Crop, stage, acres, drip or flood, soil type, and sample data, typed readings or a CSV upload. Shows water in litres; urea, DAP and MOP in kg and 50 kg bags; moisture against the trigger; confidence; crop suitability; and how it was calculated. |
-| **Weather** | 5-day rain and temperature for six Tamil Nadu districts, what the forecast means for the field, and a live rain radar (Windy.com) |
+| **Weather** | 5-day rain and temperature for the selected farm or any place you search, what the forecast means for the field, and a live rain radar (Windy.com) |
+| **Farms** | Add, edit and delete fields: name, crop, stage, acres, drip or flood, soil type, and location (search any village or town, use this device's location, or type coordinates). Upload each farm's sensor CSV; a CSV template is provided. |
 
 ## API
 
@@ -144,8 +147,12 @@ Interactive docs at `http://127.0.0.1:8000/docs` while `server.py` runs.
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /api/advice` | Full advisory. Form fields (all optional): `csv` file, or `moisture`, `n`, `p`, `k`; `crop`, `stage`, `days_after_transplanting`, `area_acres`, `irrigation` (drip/flood), `soil` (clay_loam / red_soil / sandy_loam), `lat`, `lon`. With no data it uses the sample file. |
-| `POST /api/chat` | `{"message": "..."}` → the agent's answer, parsed fields and trace |
+| `POST /api/advice` | Full advisory. Form fields (all optional): `csv` file, or `moisture`, `n`, `p`, `k`, or `farm_id` (use that farm's sensor file and location); `crop`, `stage`, `days_after_transplanting`, `area_acres`, `irrigation` (drip/flood), `soil` (clay_loam / red_soil / sandy_loam), `lat`, `lon`. With no data it uses the sample file. |
+| `POST /api/chat` | `{"message": "...", "farm_id": "..."}` → the agent's answer, parsed fields and trace. With a farm, the agent reads that farm's sensor file and uses its crop, size, soil, watering and location by default. |
+| `GET/POST /api/farms`, `GET/PUT/DELETE /api/farms/{id}` | The farmer's fields. Stored in `.farmdata/` (set `AGENTX_FARM_DIR` to move it); a demo farm is created on first run. |
+| `GET/POST /api/farms/{id}/telemetry` | A farm's sensor readings; POST uploads a CSV (needs a `moisture` column) |
+| `POST /api/farms/{id}/advice` | Advisory for a farm with its own data and settings |
+| `GET /api/geocode?q=` | Search any place by name (Open-Meteo geocoding, no key) |
 | `GET /api/weather?lat=&lon=` | 5-day forecast, 48 h risk and which rules it triggers |
 | `GET /api/crops` | Supported crops, their stages and water rule |
 | `GET /api/crop-fit?N=&P=&K=&temperature=&humidity=&ph=` | Crop suitability from the Kaggle dataset |
@@ -161,13 +168,14 @@ Interactive docs at `http://127.0.0.1:8000/docs` while `server.py` runs.
 .venv\Scripts\python -m pytest -q
 ```
 
-77 tests cover the dose arithmetic against hand-computed values, every rule, confidence scoring, each crop's thresholds, rice flooding, crop suitability, the API (with weather mocked), the agent loop and the judges' CLI contract.
+91 tests cover the dose arithmetic against hand-computed values, every rule, confidence scoring, each crop's thresholds, rice flooding, crop suitability, the API (with weather mocked), farms and place search, the agent loop and the judges' CLI contract.
 
 ## Project layout
 
 ```
 main.py                 judges' entry point (ReAct agent, JSON contract)
 server.py               FastAPI backend for the web app
+farm_store.py           farms and their sensor files (.farmdata/)
 agent/                  ReAct loop, Gemini client and fallback, prompt, advisory pipeline (advisor.py)
 core/                   deterministic modules: quality, trends, weather, dosage, rules, confidence, crop_fit
 config/agronomy.yaml    every agronomy constant, with its source

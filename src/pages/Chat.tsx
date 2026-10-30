@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { RotateCcw, SendHorizontal, Sprout, User } from 'lucide-react';
 import type { ChatReply } from '../api';
 import { clearChat, sendMessage, useChat } from '../chatStore';
+import { useFarms } from '../farmStore';
 import { AdviceCard, ErrorNote, Spinner, TraceSteps, UrgencyChip } from '../components/ui';
 
 const SUGGESTIONS = [
@@ -66,6 +67,7 @@ function BotReply({ reply }: { reply: ChatReply }) {
 
 export default function Chat() {
   const { messages, busy } = useChat();
+  const { selected: farm } = useFarms();
   const [input, setInput] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -89,6 +91,12 @@ export default function Chat() {
           <p className="text-soil-700">
             Same advisor as the command line: it reads your sensor data, checks the weather and computes doses.
           </p>
+          {farm && (
+            <p className="mt-1 text-sm font-semibold text-leaf-800">
+              Answering about: {farm.name} · {farm.crop} · {farm.area_acres} acre(s) · {farm.location.name}
+              {!farm.has_telemetry && <span className="text-warn-700"> · no sensor data yet</span>}
+            </p>
+          )}
         </div>
         {messages.length > 0 && (
           <button
@@ -107,7 +115,10 @@ export default function Chat() {
         {messages.map((m, i) =>
           m.role === 'user' ? (
             <div key={i} className="flex justify-end gap-3">
-              <p className="max-w-xl rounded-2xl rounded-tr-sm bg-soil-700 px-4 py-3 text-lg text-white">{m.text}</p>
+              <div className="max-w-xl text-right">
+                <p className="rounded-2xl rounded-tr-sm bg-soil-700 px-4 py-3 text-left text-lg text-white">{m.text}</p>
+                {m.farm && <p className="mt-1 text-xs text-soil-700">about {m.farm}</p>}
+              </div>
               <Avatar />
             </div>
           ) : m.role === 'bot' ? (
@@ -148,7 +159,7 @@ export default function Chat() {
           e.preventDefault();
           send(input);
         }}
-        className="sticky bottom-20 flex gap-2 rounded-2xl border border-soil-200 bg-white p-2 shadow-md md:bottom-4"
+        className="sticky bottom-20 flex gap-2 rounded-2xl border border-soil-200 bg-white p-2 shadow-md xl:bottom-4"
       >
         <label htmlFor="chat-input" className="sr-only">
           Your question

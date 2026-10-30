@@ -8,6 +8,7 @@ import sqlite3
 
 import config
 from tools import Tool
+from tools.farm_context import telemetry_file
 
 
 def _data_dir():
@@ -15,7 +16,9 @@ def _data_dir():
 
 
 def _path(filename):
-    path = os.path.join(_data_dir(), os.path.basename(filename))
+    name = os.path.basename(filename)
+    # The selected farm's sensor file stands in for the sample soil_telemetry.csv.
+    path = telemetry_file(_data_dir()) if name == "soil_telemetry.csv" else os.path.join(_data_dir(), name)
     if not os.path.exists(path):
         raise FileNotFoundError(f"{filename} not found. Use list_files first.")
     return path

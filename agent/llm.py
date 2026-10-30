@@ -126,9 +126,10 @@ class LLM:
 
         # Agricultural query: run the real tools in order, then answer ONLY from the
         # calculate_dosage observation (the shared deterministic pipeline). Never canned numbers.
+        # Crop, stage and area from the question; anything not named falls back to the selected farm.
         crop = next((c for c, words in (("rice", ("rice", "paddy")), ("maize", ("maize", "corn")),
                                          ("cotton", ("cotton",)), ("tomato", ("tomato",)))
-                     if any(w in q_lower for w in words)), "tomato")
+                     if any(w in q_lower for w in words)), None)
         stage = next((st for st in ("seedling", "vegetative", "flowering", "fruiting", "tillering", "ripening")
                       if st in q_lower), None)
         area = re.search(r"(\d+(?:\.\d+)?)\s*acre", q_lower)
@@ -136,9 +137,10 @@ class LLM:
             ("Read the latest and average soil sensor values.", "get_soil_readings", {"days": 7}),
             ("Check whether soil moisture is falling, rising or stable.", "analyze_trend",
              {"column": "moisture", "days": 7, "crop": crop}),
-            ("Check 48h rain and heat risk.", "get_weather_forecast", {"lat": 10.79, "lon": 78.70}),
+            ("Check 48h rain and heat risk.", "get_weather_forecast", {}),
             ("Compute the decision and exact water and fertilizer doses.", "calculate_dosage",
-             {"crop": crop, "area_acres": float(area.group(1)) if area else 1.0, "stage": stage}),
+             {k: v for k, v in (("crop", crop), ("area_acres", float(area.group(1)) if area else None),
+                                ("stage", stage)) if v is not None}),
         ]
         step_count = len([m for m in messages if m["role"] == "assistant"])
         if step_count < len(plan):

@@ -8,6 +8,7 @@ import urllib.request
 import urllib.error
 
 from tools import Tool
+from tools.farm_context import current_farm, farm_default, telemetry_file
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -55,7 +56,7 @@ def _out(d):
 
 def _load_rows():
     """Load soil_telemetry.csv using stdlib csv with alias mapping."""
-    filepath = os.path.join(_data_dir(), "soil_telemetry.csv")
+    filepath = telemetry_file(_data_dir())
     if not os.path.exists(filepath):
         raise ValueError("soil_telemetry.csv not found")
     with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
@@ -187,7 +188,7 @@ class AnalyzeTrend(Tool):
             if column == "moisture":
                 from config.agronomy import moisture_thresholds
                 try:
-                    t = moisture_thresholds(crop=crop)
+                    t = moisture_thresholds(soil=farm_default("soil"), crop=farm_default("crop", crop))
                     res["thresholds"] = t
                     res["below_trigger"] = vals[-1] < t["trigger"]
                 except ValueError as e:
@@ -201,13 +202,14 @@ class WeatherForecast(Tool):
     name = "get_weather_forecast"
     description = ("48-hour rain (mm, max probability %) and next-3-day max temperature from Open-Meteo. "
                    "Defaults to Tiruchirappalli. source='fallback' means the live forecast was unavailable.")
-    args_doc = '{"lat": 10.79, "lon": 78.70}'
+    args_doc = '{} (optional "lat", "lon"; default: the selected farm\'s location)'
 
-    def execute(self, lat=10.79, lon=78.70, **kw):
+    def execute(self, lat=None, lon=None, **kw):
         from dataclasses import asdict
 
         from core.weather import get_weather_risk
-        risk = asdict(get_weather_risk(_num(lat, 10.79), _num(lon, 78.70)))
+        lat, lon = _num(farm_default("lat", lat, 10.79), 10.79), _num(farm_default("lon", lon, 78.70), 78.70)
+        risk = {**asdict(get_weather_risk(lat, lon)), "lat": lat, "lon": lon}
         if risk["source"] == "fallback":
             risk["note"] = "Live forecast unavailable; this is a dry fallback. Advise conservatively and say so."
         return _out(risk)
@@ -257,25 +259,33 @@ class CalculateDosage(Tool):
                    "rules. Crops: tomato (stages seedling, vegetative, flowering, fruiting), rice (seedling, "
                    "tillering, flowering, ripening; always flooded), maize and cotton (whole-season targets, "
                    "stage ignored). Omit stage if unknown. Irrigation: drip or flood.")
-    args_doc = '{"crop": "tomato", "area_acres": 1.0, "stage": "flowering", "irrigation": "drip"}'
+    args_doc = ('{"crop": "tomato", "area_acres": 1.0, "stage": "flowering", "irrigation": "drip"} '
+                '(all optional: omitted values come from the selected farm)')
 
-    def execute(self, crop="tomato", area_acres=1.0, stage=None, irrigation="drip", lat=10.79, lon=78.70, **kw):
+    def execute(self, crop=None, area_acres=None, stage=None, irrigation=None, soil=None, lat=None, lon=None, **kw):
         try:
             import pandas as pd
 
             from agent.advisor import run_advisory
             from config.agronomy import load_agronomy, resolve_crop
+            farm = current_farm() or {}
             try:
-                crop = resolve_crop(crop)
+                crop = resolve_crop(farm_default("crop", crop))
             except ValueError:
                 return _out({"error": f"no dose model for '{crop}'. Supported: {list(load_agronomy()['crops'])}. "
                                       "Use check_crop_suitability and give general advice, saying so."})
-            df = pd.read_csv(os.path.join(_data_dir(), "soil_telemetry.csv"))
+            df = pd.read_csv(telemetry_file(_data_dir()))
             if len(df) < 3:
                 return _out({"error": f"only {len(df)} readings. Refusing to calculate a dosage."})
-            r = run_advisory(df, area_acres=_num(area_acres, 1.0), irrigation=str(irrigation).lower(),
-                             days_after_transplanting=30, lat=_num(lat, 10.79), lon=_num(lon, 78.70),
-                             crop=crop, stage=stage or None)
+            # The farm's saved stage only applies when the question is about the farm's own crop.
+            stage = stage or (farm.get("stage") if farm.get("crop") == crop else None)
+            area_acres = _num(farm_default("area_acres", area_acres, 1.0), 1.0)
+            r = run_advisory(df, area_acres=area_acres,
+                             irrigation=str(farm_default("irrigation", irrigation, "drip")).lower(),
+                             days_after_transplanting=30,
+                             lat=_num(farm_default("lat", lat, 10.79), 10.79),
+                             lon=_num(farm_default("lon", lon, 78.70), 78.70),
+                             crop=crop, soil=farm_default("soil", soil), stage=stage or None)
             doses = r["doses"] or {}
             fert = doses.get("fertilizer")
             water = doses.get("irrigation")
@@ -286,7 +296,7 @@ class CalculateDosage(Tool):
                 "why": r["reasons"],
                 "crop": r["crop"],
                 "stage": r["stage"],
-                "area_acres": _num(area_acres, 1.0),
+                "area_acres": area_acres,
                 "moisture_now_pct": r["readings"]["moisture"],
                 "moisture_thresholds": r["moisture_thresholds"],
                 "water": water and {
@@ -320,7 +330,7 @@ class CheckCropSuitability(Tool):
             import pandas as pd
 
             from core.crop_fit import crop_fit
-            df = pd.read_csv(os.path.join(_data_dir(), "soil_telemetry.csv"))
+            df = pd.read_csv(telemetry_file(_data_dir()))
             cols = {c.lower(): c for c in df.columns}
 
             def latest(name):
@@ -329,7 +339,7 @@ class CheckCropSuitability(Tool):
                 return float(vals.iloc[-1]) if len(vals) else None
 
             readings = {f: latest(f) for f in ("N", "P", "K", "temperature", "humidity", "ph")}
-            return _out(crop_fit(readings, crop=crop))
+            return _out(crop_fit(readings, crop=farm_default("crop", crop)))
         except Exception as e:
             return _out({"error": f"crop suitability failed: {e}"})
 

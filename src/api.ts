@@ -50,8 +50,29 @@ export interface WeatherRisk {
   source: 'live' | 'cache' | 'fallback';
 }
 
+export interface Place {
+  name: string;
+  lat: number;
+  lon: number;
+}
+
+export interface Farm {
+  id: string;
+  name: string;
+  crop: string;
+  stage: string | null;
+  area_acres: number;
+  irrigation: 'drip' | 'flood';
+  soil: string;
+  location: Place;
+  has_telemetry: boolean;
+  created_at: string;
+}
+
+export type FarmInput = Omit<Farm, 'id' | 'has_telemetry' | 'created_at'>;
+
 export interface Advice {
-  input_source: 'upload' | 'manual' | 'sample';
+  input_source: 'upload' | 'manual' | 'sample' | 'farm';
   decision: string;
   urgency: Urgency;
   crop: string;
@@ -119,7 +140,12 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     const detail = body?.detail;
-    throw new Error(typeof detail === 'string' ? detail : `Request failed (${res.status})`);
+    const message = typeof detail === 'string'
+      ? detail
+      : Array.isArray(detail)
+        ? detail.map((d: { loc?: string[]; msg?: string }) => `${d.loc?.slice(-1)[0] ?? 'field'}: ${d.msg}`).join('; ')
+        : `Request failed (${res.status})`;
+    throw new Error(message);
   }
   return res.json() as Promise<T>;
 }
@@ -129,13 +155,32 @@ export const api = {
   crops: () => request<Crops>('/api/crops'),
   weather: (lat: number, lon: number) => request<Forecast>(`/api/weather?lat=${lat}&lon=${lon}`),
   advice: (form: FormData) => request<Advice>('/api/advice', { method: 'POST', body: form }),
-  chat: (message: string) =>
+  chat: (message: string, farmId?: string | null) =>
     request<ChatReply>('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, farm_id: farmId || null }),
     }),
+  geocode: (q: string) => request<Place[]>(`/api/geocode?q=${encodeURIComponent(q)}`),
+  farms: () => request<Farm[]>('/api/farms'),
+  createFarm: (farm: FarmInput) => request<Farm>('/api/farms', jsonBody('POST', farm)),
+  updateFarm: (id: string, farm: FarmInput) => request<Farm>(`/api/farms/${id}`, jsonBody('PUT', farm)),
+  deleteFarm: async (id: string) => {
+    const res = await fetch(`/api/farms/${id}`, { method: 'DELETE' });
+    if (!res.ok && res.status !== 404) throw new Error(`Could not delete the farm (${res.status})`);
+  },
+  farmTelemetry: (id: string) => request<{ rows: TelemetryRow[] }>(`/api/farms/${id}/telemetry`),
+  uploadFarmTelemetry: (id: string, file: File) => {
+    const form = new FormData();
+    form.set('csv', file);
+    return request<{ rows: number; farm: Farm }>(`/api/farms/${id}/telemetry`, { method: 'POST', body: form });
+  },
+  farmAdvice: (id: string) => request<Advice & { farm: Farm }>(`/api/farms/${id}/advice`, { method: 'POST' }),
 };
+
+function jsonBody(method: string, body: unknown): RequestInit {
+  return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+}
 
 /** Speak text through the backend's gTTS endpoint. Resolves when playback starts. */
 export async function speak(text: string, lang: 'en' | 'ta'): Promise<HTMLAudioElement> {

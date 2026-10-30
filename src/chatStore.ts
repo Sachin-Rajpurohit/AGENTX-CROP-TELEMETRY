@@ -3,9 +3,10 @@
 // running when the farmer leaves the page; its reply lands here either way.
 import { useSyncExternalStore } from 'react';
 import { api, type ChatReply } from './api';
+import { selectedFarm } from './farmStore';
 
 export type Message =
-  | { role: 'user'; text: string }
+  | { role: 'user'; text: string; farm?: string }
   | { role: 'bot'; reply: ChatReply }
   | { role: 'error'; text: string };
 
@@ -55,9 +56,10 @@ export function useChat() {
 export async function sendMessage(text: string) {
   const q = text.trim();
   if (!q || state.busy) return;
-  setState({ messages: [...state.messages, { role: 'user', text: q }], busy: true });
+  const farm = selectedFarm();
+  setState({ messages: [...state.messages, { role: 'user', text: q, farm: farm?.name }], busy: true });
   try {
-    const reply = await api.chat(q);
+    const reply = await api.chat(q, farm?.id);
     setState({ messages: [...state.messages, { role: 'bot', reply }], busy: false });
   } catch (e) {
     setState({ messages: [...state.messages, { role: 'error', text: (e as Error).message }], busy: false });

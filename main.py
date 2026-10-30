@@ -20,9 +20,9 @@ from agent.llm import LLM, DryRunLLM
 from tools import build_tools
 
 
-def run_agent(query, dry_run=False, verbose=False):
+def run_agent(query, dry_run=False, verbose=False, role=None):
     llm = DryRunLLM() if dry_run else LLM()
-    return AgentExecutor(llm, build_tools()).run(query, verbose=verbose)
+    return AgentExecutor(llm, build_tools(), role=role).run(query, verbose=verbose)
 
 
 def main():

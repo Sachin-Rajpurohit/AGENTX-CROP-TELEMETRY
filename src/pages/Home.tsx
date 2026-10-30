@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { CloudRain, FlaskConical, MessageCircle } from 'lucide-react';
+import { CloudRain, FlaskConical, MapPin, MessageCircle } from 'lucide-react';
 import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api, type Advice, type TelemetryRow } from '../api';
 import { AdviceCard, CROP_LABEL, ErrorNote, Spinner, STAGE_LABEL, UrgencyBanner, fmt } from '../components/ui';
+import { useFarms } from '../farmStore';
 
 const READINGS = [
   { key: 'moisture', en: 'Soil moisture', ta: 'ஈரப்பதம்', unit: '%' },
@@ -20,18 +21,29 @@ const LINKS = [
 ];
 
 export default function Home() {
+  const { selected: farm, loaded } = useFarms();
   const [rows, setRows] = useState<TelemetryRow[]>([]);
   const [advice, setAdvice] = useState<Advice | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    Promise.all([api.sample(), api.advice(new FormData())])
-      .then(([sample, adv]) => {
-        setRows(sample.rows);
+    setRows([]);
+    setAdvice(null);
+    setError('');
+    if (!farm?.has_telemetry) return;
+    let current = true;
+    Promise.all([api.farmTelemetry(farm.id), api.farmAdvice(farm.id)])
+      .then(([telemetry, adv]) => {
+        if (!current) return;
+        setRows(telemetry.rows);
         setAdvice(adv);
       })
-      .catch((e) => setError(e.message));
-  }, []);
+      .catch((e) => current && setError(e.message));
+    return () => {
+      current = false;
+    };
+  }, [farm?.id, farm?.has_telemetry, farm?.crop, farm?.stage, farm?.area_acres, farm?.soil, farm?.irrigation,
+      farm?.location.lat, farm?.location.lon]);
 
   const latest = rows[rows.length - 1];
   const chart = rows.slice(-7).map((r) => ({
@@ -45,15 +57,30 @@ export default function Home() {
         <h1 className="text-2xl font-extrabold text-soil-900 sm:text-3xl">
           Vanakkam! <span className="tamil text-leaf-700">வணக்கம்!</span>
         </h1>
-        <p className="text-lg text-soil-700">
-          {advice
-            ? `Your ${CROP_LABEL[advice.crop]?.en.toLowerCase() ?? advice.crop} field · ${STAGE_LABEL[advice.stage] ?? advice.stage} · today's advice`
-            : 'Your field today'}
-        </p>
+        {farm && (
+          <p className="text-lg text-soil-700">
+            <b className="text-soil-900">{farm.name}</b> · {CROP_LABEL[farm.crop]?.en ?? farm.crop}
+            {advice && ` · ${STAGE_LABEL[advice.stage] ?? advice.stage}`} · {fmt(farm.area_acres, 1)} acre(s)
+            <span className="flex items-center gap-1 text-sm">
+              <MapPin className="h-4 w-4" aria-hidden /> {farm.location.name}
+            </span>
+          </p>
+        )}
       </section>
 
+      {loaded && !farm && (
+        <p className="card p-6 text-soil-700">
+          No farm yet. <a href="#/farms" className="font-bold text-leaf-800 underline">Add your first farm</a> to get advice.
+        </p>
+      )}
+      {farm && !farm.has_telemetry && (
+        <p className="card p-6 text-soil-700">
+          {farm.name} has no sensor data yet.{' '}
+          <a href="#/farms" className="font-bold text-leaf-800 underline">Upload a CSV on the Farms page</a> to see advice.
+        </p>
+      )}
       {error && <ErrorNote message={error} />}
-      {!advice && !error && <Spinner label="Reading your soil sensor and the weather…" />}
+      {farm?.has_telemetry && !advice && !error && <Spinner label="Reading your soil sensor and the weather…" />}
 
       {advice && (
         <>

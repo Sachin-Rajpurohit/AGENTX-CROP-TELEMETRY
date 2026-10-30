@@ -1,16 +1,11 @@
 import { useEffect, useState } from 'react';
 import { CloudRain, Droplets, FlaskConical, MapPin, Sun, Thermometer } from 'lucide-react';
-import { api, type Forecast } from '../api';
+import { api, type Forecast, type Place } from '../api';
+import LocationPicker from '../components/LocationPicker';
 import { ErrorNote, Spinner, fmt } from '../components/ui';
+import { useFarms } from '../farmStore';
 
-const PLACES = [
-  { name: 'Tiruchirappalli', ta: 'திருச்சிராப்பள்ளி', lat: 10.79, lon: 78.7 },
-  { name: 'Thanjavur', ta: 'தஞ்சாவூர்', lat: 10.79, lon: 79.14 },
-  { name: 'Madurai', ta: 'மதுரை', lat: 9.93, lon: 78.12 },
-  { name: 'Coimbatore', ta: 'கோயம்புத்தூர்', lat: 11.02, lon: 76.96 },
-  { name: 'Salem', ta: 'சேலம்', lat: 11.66, lon: 78.15 },
-  { name: 'Chennai', ta: 'சென்னை', lat: 13.08, lon: 80.27 },
-];
+const DEFAULT_PLACE: Place = { name: 'Tiruchirappalli, Tamil Nadu, India', lat: 10.79, lon: 78.7 };
 
 const SOURCE_NOTE: Record<Forecast['source'], string> = {
   live: 'Live forecast from Open-Meteo',
@@ -41,15 +36,28 @@ function Effect({ on, icon, yes, no, ta }: { on: boolean; icon: React.ReactNode;
 }
 
 export default function Weather() {
-  const [place, setPlace] = useState(PLACES[0]);
+  const { farms, selected } = useFarms();
+  const [chosen, setChosen] = useState<Place | null>(null);  // a searched place overrides the farm
+  const place = chosen ?? selected?.location ?? DEFAULT_PLACE;
   const [forecast, setForecast] = useState<Forecast | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
+    setChosen(null);
+  }, [selected?.id]);
+
+  useEffect(() => {
+    let current = true;
     setForecast(null);
     setError('');
-    api.weather(place.lat, place.lon).then(setForecast).catch((e) => setError(e.message));
-  }, [place]);
+    api
+      .weather(place.lat, place.lon)
+      .then((f) => current && setForecast(f))
+      .catch((e) => current && setError(e.message));
+    return () => {
+      current = false;
+    };
+  }, [place.lat, place.lon]);
 
   const radar =
     `https://embed.windy.com/embed2.html?lat=${place.lat}&lon=${place.lon}&detailLat=${place.lat}` +
@@ -58,29 +66,42 @@ export default function Weather() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-extrabold text-soil-900">
-            Weather & Rain Radar <span className="tamil text-xl text-leaf-700">· வானிலை</span>
-          </h1>
-          <p className="text-soil-700">Rain and heat for the next 5 days, and what it means for your field.</p>
-        </div>
-        <label className="flex items-center gap-2">
-          <MapPin className="h-5 w-5 text-leaf-700" aria-hidden />
-          <span className="sr-only">Location</span>
-          <select
-            className="rounded-xl border border-soil-300 bg-white px-3 py-2.5 text-lg font-semibold"
-            value={place.name}
-            onChange={(e) => setPlace(PLACES.find((p) => p.name === e.target.value)!)}
-          >
-            {PLACES.map((p) => (
-              <option key={p.name} value={p.name}>
-                {p.name} – {p.ta}
-              </option>
-            ))}
-          </select>
-        </label>
+      <div>
+        <h1 className="text-2xl font-extrabold text-soil-900">
+          Weather & Rain Radar <span className="tamil text-xl text-leaf-700">· வானிலை</span>
+        </h1>
+        <p className="text-soil-700">Rain and heat for the next 5 days, and what it means for your field.</p>
       </div>
+
+      <section className="card grid gap-4 p-4 md:grid-cols-2">
+        <div>
+          <h2 className="mb-2 flex items-center gap-2 font-bold text-soil-900">
+            <MapPin className="h-5 w-5 text-leaf-700" aria-hidden /> Showing: {place.name}
+          </h2>
+          {farms.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {farms.map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setChosen(f.location)}
+                  className={`rounded-full border px-3 py-1.5 text-sm font-semibold ${
+                    place.lat === f.location.lat && place.lon === f.location.lon
+                      ? 'border-leaf-700 bg-leaf-700 text-white'
+                      : 'border-soil-300 bg-white text-soil-700 hover:bg-soil-100'
+                  }`}
+                >
+                  {f.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div>
+          <p className="mb-2 font-semibold text-soil-800">Check any other place</p>
+          <LocationPicker value={null} onChange={setChosen} />
+        </div>
+      </section>
 
       {error && <ErrorNote message={error} />}
       {!forecast && !error && <Spinner label="Fetching the forecast…" />}

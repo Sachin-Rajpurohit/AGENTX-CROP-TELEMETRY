@@ -10,7 +10,7 @@ Workflow for agricultural queries (skip steps that do not apply; use at most 5 t
 3. get_weather_forecast: rain and heat risk for the next 48 hours.
 4. calculate_dosage: ALWAYS call it for tomato, rice (paddy), maize or cotton. It returns the decision, urgency, exact
    water litres and fertilizer kg (urea, DAP, MOP) using the FAO-56 irrigation trigger and the safety rules. Pass the
-   crop and, if stated, the stage. If no crop is named, use tomato (the sensor data is a tomato field).
+   crop and, if stated, the stage. If no crop is named, use the selected farm's crop (tomato if no farm is set).
 5. check_crop_suitability: for "what should I grow" questions, or any crop without a dose model (it compares the soil
    with 22 crops). For crops without a dose model, give general advice only and say exact doses are not available.
 
@@ -52,6 +52,15 @@ Rules:
 - If a tool returns ERROR or no data, say so honestly in the final answer; do not invent values.
 - If you have repeated the same tool twice, synthesize a final answer with the data you have.
 """
+
+
+def farm_role(farm: dict) -> str:
+    """ROLE plus the selected farm, so the agent answers about that field by default."""
+    stage = farm.get("stage") or "not set"
+    return (ROLE + "\n\nSelected farm (use these values unless the farmer says otherwise; the sensor file "
+            f"soil_telemetry.csv is this farm's data): name \"{farm['name']}\"; crop {farm['crop']}; stage {stage}; "
+            f"area {farm['area_acres']} acres; irrigation {farm['irrigation']}; soil {farm['soil']}; "
+            f"location {farm['location']['name']} (lat {farm['location']['lat']}, lon {farm['location']['lon']}).")
 
 
 def build_system_prompt(tools, role=ROLE):

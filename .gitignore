@@ -24,3 +24,6 @@ Thumbs.db
 
 # weather forecast cache (core/weather.py)
 .cache/
+
+# farms and their sensor files (farm_store.py)
+.farmdata/
