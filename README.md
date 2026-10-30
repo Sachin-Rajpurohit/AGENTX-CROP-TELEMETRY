@@ -14,37 +14,106 @@ Input: each farm's own sensor CSV, readings typed in, or the sample `data/soil_t
 
 ---
 
-## Quick start
+## Setup on any machine
 
-Requires Python 3.10+ and Node.js 18+.
+### 1. Install these first (one time)
 
-```bash
+| Tool | Version | Get it | Check it's installed |
+|---|---|---|---|
+| Git | any | https://git-scm.com/downloads | `git --version` |
+| Python | 3.10 or newer | https://www.python.org/downloads/ (Windows: tick **"Add python.exe to PATH"**) | `python --version` (macOS/Linux: `python3 --version`) |
+| Node.js | 18 or newer (LTS) | https://nodejs.org/ | `node --version` |
+| Gemini API key | free | https://aistudio.google.com/apikey | — |
+
+### 2. Download and install
+
+**Windows** (Command Prompt or PowerShell):
+
+```bat
+git clone https://github.com/Sachin-Rajpurohit/AGENTX-CROP-TELEMETRY.git
+cd AGENTX-CROP-TELEMETRY
+git checkout feature/farms-and-locations
 python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt      # macOS/Linux: .venv/bin/pip
+.venv\Scripts\python -m pip install --upgrade pip
+.venv\Scripts\python -m pip install -r requirements.txt
 npm install
+copy .env.example .env
+notepad .env
 ```
 
-`requirements.txt` lists every Python package needed to run the agent, the API and the tests (checked with a fresh install); `npm install` installs the web app's packages.
-
-Create a `.env` file with your Gemini key (used only by the chat agent):
-
-```
-GEMINI_API_KEY=your-key
-```
-
-Run the backend and the web app in two terminals:
+**macOS / Linux** (Terminal):
 
 ```bash
-.venv\Scripts\python server.py     # API on http://127.0.0.1:8000  (try it at /docs)
-npm run dev                        # web app on http://localhost:3000
+git clone https://github.com/Sachin-Rajpurohit/AGENTX-CROP-TELEMETRY.git
+cd AGENTX-CROP-TELEMETRY
+git checkout feature/farms-and-locations
+python3 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -r requirements.txt
+npm install
+cp .env.example .env
+nano .env
 ```
+
+`git checkout feature/farms-and-locations` picks the branch with the latest features (multiple farms, 23 crops); skip it once that branch is merged into `main`.
+
+### 3. Add your Gemini key
+
+The last command opens `.env`. Replace `paste-your-gemini-key-here` with your key so the line reads:
+
+```
+GEMINI_API_KEY=AIza...your-key...
+```
+
+Save and close. `.env` is ignored by git, so your key stays on your machine. Everything except the chat works without a key.
+
+### 4. Check that it works
+
+Windows (on macOS/Linux use `.venv/bin/python` instead of `.venv\Scripts\python`):
+
+```bat
+.venv\Scripts\python -m pytest -q
+.venv\Scripts\python main.py --json --dry-run "hi"
+.venv\Scripts\python main.py --json "Should I irrigate my 1 acre tomato field today?"
+```
+
+1. All tests pass (they run offline).
+2. The dry run prints one JSON line without using your key.
+3. The last command uses your Gemini key and prints an answer starting with `URGENCY:`.
+
+### 5. Run the app
+
+Open **two** terminals in the project folder.
+
+| Terminal 1: the API | Terminal 2: the web app |
+|---|---|
+| Windows: `.venv\Scripts\python server.py` | `npm run dev` |
+| macOS/Linux: `.venv/bin/python server.py` | `npm run dev` |
+
+Then open **http://localhost:3000** in your browser. Go to **Farms → Add your farm**, fill in the crop, size and location, and choose *Upload my sensor CSV* or *Use sample data*.
+
+- API test page: **http://127.0.0.1:8000/docs** (try every endpoint with buttons).
+- `http://127.0.0.1:8000/` itself shows "Not Found": that's normal, the web app is on port 3000.
+- Stop either one with **Ctrl+C**.
+
+### Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| `python` not found (Windows) | Reinstall Python and tick "Add python.exe to PATH", or use `py` instead of `python`. |
+| `python` not found (macOS/Linux) | Use `python3`. |
+| `error while attempting to bind on address ('127.0.0.1', 8000)` | Another server is already using port 8000. Close the other terminal running `server.py`, or set `PORT=8001` in `.env` and change the `/api` target in `vite.config.ts` to match. |
+| Web page says "Cannot reach the advisory server" | Terminal 1 (`server.py`) isn't running. |
+| Chat answers but the server log shows `[llm] gemini call failed` | Check the key in `.env`, then restart `server.py`. The fallback still answers from the real tools meanwhile. |
+| `npm` not found | Install Node.js, then open a new terminal. |
+| Voice or radar doesn't work | They need internet; everything else works offline (weather falls back to a cautious estimate). |
 
 ### The judges' command line
 
 ```bash
-python main.py "My 1 acre tomato field is flowering. Should I irrigate today?"   # shows Thought / Action / Observation
-python main.py --json "Should I irrigate my tomato field today?"                 # ONE JSON line: {"answer", "trace"}
-python main.py --dry-run "anything"                                              # check the setup without an API key
+.venv\Scripts\python main.py "My 1 acre tomato field is flowering. Should I irrigate today?"   # shows Thought / Action / Observation
+.venv\Scripts\python main.py --json "Should I irrigate my tomato field today?"                 # ONE JSON line: {"answer", "trace"}
+.venv\Scripts\python main.py --dry-run "anything"                                              # check the setup without an API key
 ```
 
 Example answer (sample data, dry forecast):
