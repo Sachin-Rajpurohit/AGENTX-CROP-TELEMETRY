@@ -1,7 +1,7 @@
 # Uzhavan (உழவன்) — Crop Stress Telemetry & Advisory
 
 **Soil sensor readings in, an actionable farm advisory out.**
-Built for the AgentX Challenge, *Precision Agriculture* track, for tomato, rice, maize and cotton farmers in Tamil Nadu.
+Built for the AgentX Challenge, *Precision Agriculture* track, for farmers in Tamil Nadu: 23 crops (tomato plus the 22 crops of the Kaggle dataset).
 
 | The brief asks for | How Uzhavan does it |
 |---|---|
@@ -10,7 +10,7 @@ Built for the AgentX Challenge, *Precision Agriculture* track, for tomato, rice,
 | Compute exact fertilizer / water dosage | Litres of water for the field today, and urea, DAP and MOP in kg for the field's area |
 | Advice in simple regional language or English | Every answer in **Tamil and English**, with an URGENCY level and voice playback |
 
-Input: each farm's own sensor CSV (the demo farm uses `data/soil_telemetry.csv`, 8 daily readings from a tomato field), or readings typed in.
+Input: each farm's own sensor CSV, readings typed in, or the sample `data/soil_telemetry.csv` (8 daily readings from a tomato field).
 
 ---
 
@@ -61,6 +61,8 @@ Estimate only. Confirm with a local agriculture officer.
 ---
 
 ## How it works
+
+Full backend guide (every calculation, the agent, the API and a testing checklist): [docs/BACKEND.md](docs/BACKEND.md).
 
 The LLM does not do the agronomy. A deterministic, tested pipeline computes every number, and the agent and the web app both call it, so they always agree.
 
@@ -123,7 +125,7 @@ All constants live in `config/agronomy.yaml`. Each one names its source or is ta
 | File | Source | Used for |
 |---|---|---|
 | `soil_telemetry.csv` | Challenge input | The farm's sensor readings |
-| `Crop_recommendation.csv` | [Kaggle Crop Recommendation](https://www.kaggle.com/datasets/atharvaingle/crop-recommendation-dataset) (22 crops) | Crop suitability: which crops' typical N, P, K, pH, temperature and humidity ranges (10th–90th percentile) this field falls inside. Rainfall is excluded because the dataset uses seasonal totals. |
+| `Crop_recommendation.csv` | [Kaggle Crop Recommendation](https://www.kaggle.com/datasets/atharvaingle/crop-recommendation-dataset) (22 crops) | Crop suitability: which crops' typical N, P, K, pH, temperature and humidity ranges (10th–90th percentile) this field falls inside (rainfall excluded: the dataset uses seasonal totals). Also the N/P/K target (median) for the 19 crops without a TNAU figure. |
 | `tomato_water_sensor_data.json`, `tomato irrigation dataset.csv` | [Mendeley: Dataset on irrigation for Tomato](https://data.mendeley.com/datasets/33cngpcrmx) (Kasera & Acharjee, CC BY 4.0) | Background on tomato thresholds; see the note above |
 | `crop_requirements.json` | TNAU Agritech Portal & ICAR | N/P/K targets by crop and stage |
 
@@ -139,7 +141,7 @@ White, soil-brown and leaf-green, with large text and Tamil beside every heading
 | **Ask Uzhavan** | Chat with a bilingual welcome message. Runs the same agent as `python main.py`; answers show the urgency, Tamil and English advice, and "How I worked this out" (the Thought / Action / Observation steps). History is kept across page switches and refreshes. |
 | **Dose Calculator** | Crop, stage, acres, drip or flood, soil type, and sample data, typed readings or a CSV upload. Shows water in litres; urea, DAP and MOP in kg and 50 kg bags; moisture against the trigger; confidence; crop suitability; and how it was calculated. |
 | **Weather** | 5-day rain and temperature for the selected farm or any place you search, what the forecast means for the field, and a live rain radar (Windy.com) |
-| **Farms** | Add, edit and delete fields: name, crop, stage, acres, drip or flood, soil type, and location (search any village or town, use this device's location, or type coordinates). Upload each farm's sensor CSV; a CSV template is provided. |
+| **Farms** | Farmers add their own fields: name, crop, sowing date (the growth stage is worked out from it), size in acres, cents or hectares, drip or flood, soil type, and location (search any village or town, or use this device's location). Upload each farm's sensor CSV (a template is provided) or use the sample data. |
 
 ## API
 
@@ -149,7 +151,8 @@ Interactive docs at `http://127.0.0.1:8000/docs` while `server.py` runs.
 |---|---|
 | `POST /api/advice` | Full advisory. Form fields (all optional): `csv` file, or `moisture`, `n`, `p`, `k`, or `farm_id` (use that farm's sensor file and location); `crop`, `stage`, `days_after_transplanting`, `area_acres`, `irrigation` (drip/flood), `soil` (clay_loam / red_soil / sandy_loam), `lat`, `lon`. With no data it uses the sample file. |
 | `POST /api/chat` | `{"message": "...", "farm_id": "..."}` → the agent's answer, parsed fields and trace. With a farm, the agent reads that farm's sensor file and uses its crop, size, soil, watering and location by default. |
-| `GET/POST /api/farms`, `GET/PUT/DELETE /api/farms/{id}` | The farmer's fields. Stored in `.farmdata/` (set `AGENTX_FARM_DIR` to move it); a demo farm is created on first run. |
+| `GET/POST /api/farms`, `GET/PUT/DELETE /api/farms/{id}` | The farmer's fields. Stored in `.farmdata/` (set `AGENTX_FARM_DIR` to move it). No farm is created automatically. |
+| `POST /api/farms/{id}/sample-data` | Give a farm the bundled sample sensor file |
 | `GET/POST /api/farms/{id}/telemetry` | A farm's sensor readings; POST uploads a CSV (needs a `moisture` column) |
 | `POST /api/farms/{id}/advice` | Advisory for a farm with its own data and settings |
 | `GET /api/geocode?q=` | Search any place by name (Open-Meteo geocoding, no key) |
@@ -168,7 +171,7 @@ Interactive docs at `http://127.0.0.1:8000/docs` while `server.py` runs.
 .venv\Scripts\python -m pytest -q
 ```
 
-91 tests cover the dose arithmetic against hand-computed values, every rule, confidence scoring, each crop's thresholds, rice flooding, crop suitability, the API (with weather mocked), farms and place search, the agent loop and the judges' CLI contract.
+98 tests cover the dose arithmetic against hand-computed values, every rule, confidence scoring, each crop's thresholds, rice flooding, crop suitability, the API (with weather mocked), farms and place search, the agent loop and the judges' CLI contract.
 
 ## Project layout
 
@@ -189,7 +192,7 @@ tests/                  pytest suite
 ## Limitations
 
 - **N/P/K units:** readings are compared directly with fertilizer requirements in kg/ha. The sample file does not state its units, so this is an assumption shown in every result.
-- **Dose models** exist for tomato, rice, maize and cotton. For other crops the agent gives general advice and the crop suitability check, but no exact doses.
+- **Fertilizer targets:** tomato, rice, maize and cotton use TNAU/ICAR figures. The other 19 crops use the median N/P/K of their rows in the Kaggle dataset, which is not an agronomy recommendation; results say so and confidence drops by 10%. Crops outside the 23 get general advice only.
 - **Rice:** "ponded water gone" is approximated as moisture below field capacity, because a soil sensor cannot see standing water.
 - **Stage timings** (days after transplanting for each stage) and several efficiencies are assumptions, tagged in `config/agronomy.yaml`.
 - **The Tamil text** is template-based and should be reviewed by a native speaker.
