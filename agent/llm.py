@@ -126,15 +126,19 @@ class LLM:
 
         # Agricultural query: run the real tools in order, then answer ONLY from the
         # calculate_dosage observation (the shared deterministic pipeline). Never canned numbers.
-        stage = next((st for st in ("seedling", "vegetative", "flowering", "fruiting") if st in q_lower), "vegetative")
+        crop = next((c for c, words in (("rice", ("rice", "paddy")), ("maize", ("maize", "corn")),
+                                         ("cotton", ("cotton",)), ("tomato", ("tomato",)))
+                     if any(w in q_lower for w in words)), "tomato")
+        stage = next((st for st in ("seedling", "vegetative", "flowering", "fruiting", "tillering", "ripening")
+                      if st in q_lower), None)
         area = re.search(r"(\d+(?:\.\d+)?)\s*acre", q_lower)
         plan = [
             ("Read the latest and average soil sensor values.", "get_soil_readings", {"days": 7}),
             ("Check whether soil moisture is falling, rising or stable.", "analyze_trend",
-             {"column": "moisture", "days": 7}),
+             {"column": "moisture", "days": 7, "crop": crop}),
             ("Check 48h rain and heat risk.", "get_weather_forecast", {"lat": 10.79, "lon": 78.70}),
             ("Compute the decision and exact water and fertilizer doses.", "calculate_dosage",
-             {"crop": "tomato", "area_acres": float(area.group(1)) if area else 1.0, "stage": stage}),
+             {"crop": crop, "area_acres": float(area.group(1)) if area else 1.0, "stage": stage}),
         ]
         step_count = len([m for m in messages if m["role"] == "assistant"])
         if step_count < len(plan):

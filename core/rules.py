@@ -4,7 +4,7 @@ Every rule whose condition holds fires; the decision is the highest-priority
 fired rule. Thresholds come from config/agronomy.yaml.
 
 R5 FLATLINE_HOLD: sensor fault (critical FLATLINE / OUT_OF_RANGE on moisture) -> INSPECT_SENSOR, no dose numbers
-R6 SATURATED: moisture >= fc -> DRAINAGE_WARNING, no irrigation
+R6 SATURATED: moisture >= fc (not for flooded rice) -> DRAINAGE_WARNING, no irrigation
 R1 RAIN_SKIP_IRRIGATION: irrigation needed AND rain_mm_48h >= 8 AND prob >= 60 -> WAIT_FOR_RAIN
 R2 RAIN_DELAY_FERT: fertilizer due AND rain_mm_48h >= 25 -> DELAY_FERTILIZER (leaching and runoff)
 R3 DRY_NO_FERT: fertilizer due AND moisture below trigger -> IRRIGATE_THEN_FERTILIZE (root burn)
@@ -62,13 +62,15 @@ def fire_rules(
     cfg: dict,
     has_sensor_fault: bool = False,
     computed_doses_exceed_cap: bool = False,
+    flooded: bool = False,
 ) -> dict:
-    """Return {"decision", "fired_rules": [ids], "reasons": [str]}."""
+    """Return {"decision", "fired_rules": [ids], "reasons": [str]}. `flooded` crops (ponded rice)
+    are meant to be saturated, so R6 never fires for them."""
     rain_likely = (rain_mm_48h >= cfg["rain_skip_threshold_mm"]
                    and rain_prob_48h >= cfg["rain_skip_prob_pct"])
     conditions = {
         R5: has_sensor_fault,
-        R6: moisture >= fc,
+        R6: moisture >= fc and not flooded,
         R1: irrigation_needed and rain_likely,
         R2: fertilizer_due and rain_mm_48h >= cfg["rain_delay_threshold_mm"],
         R3: fertilizer_due and moisture < trigger,

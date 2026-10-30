@@ -5,6 +5,8 @@ Run:  python server.py   (or: uvicorn server:app --port 8000)
 Endpoints:
   GET  /api/health                        liveness check
   GET  /api/sample                        bundled sample telemetry CSV + default parameters
+  GET  /api/crops                         supported crops, their stages and water rule
+  GET  /api/crop-fit?N=..&P=..&K=..       which of 22 crops suit these soil/climate readings (Kaggle data)
   POST /api/advice                        multipart form, see api_advice() for fields
   GET  /api/voice?text=...&lang=en|ta     spoken advisory as audio/mpeg (needs gTTS + internet)
 """
@@ -22,7 +24,8 @@ from fastapi.responses import Response
 
 from agent.advisor import run_advisory
 from config import DATA_DIR
-from config.agronomy import load_agronomy
+from config.agronomy import crop_stages, load_agronomy
+from core.crop_fit import crop_fit
 from core.dosage import IRRIGATION_METHODS
 
 SAMPLE_CSV_PATH = Path(DATA_DIR) / "soil_telemetry.csv"
@@ -51,6 +54,7 @@ def _defaults() -> dict:
         "days_after_transplanting": 30,
         "lat": cfg["default_lat"],
         "lon": cfg["default_lon"],
+        "crop": cfg["default_crop"],
         "soil": cfg["default_soil"],
         "soil_types": list(cfg["soil_types"]),
     }
@@ -79,6 +83,26 @@ def api_sample():
     return {"csv": SAMPLE_CSV_PATH.read_text(encoding="utf-8"), "metadata": _defaults()}
 
 
+@app.get("/api/crops")
+def api_crops():
+    """Crops with dose models. Crops without stages use one whole-season target."""
+    cfg = load_agronomy()
+    return {name: {"stages": crop_stages(name, cfg), "flooded": bool(c.get("flooded")), "fao56_p": c.get("p")}
+            for name, c in cfg["crops"].items()}
+
+
+@app.get("/api/crop-fit")
+def api_crop_fit(N: float | None = None, P: float | None = None, K: float | None = None,
+                 temperature: float | None = None, humidity: float | None = None, ph: float | None = None,
+                 crop: str | None = None):
+    """Rank the Kaggle dataset's 22 crops by how well these readings fit their typical ranges."""
+    result = crop_fit({"N": N, "P": P, "K": K, "temperature": temperature, "humidity": humidity, "ph": ph},
+                      crop=crop)
+    if not result["available"]:
+        raise HTTPException(400, result["reason"])
+    return result
+
+
 @app.post("/api/advice")
 def api_advice(
     csv: UploadFile | None = File(None),
@@ -91,6 +115,7 @@ def api_advice(
     days_after_transplanting: int | None = Form(None),
     lat: float | None = Form(None),
     lon: float | None = Form(None),
+    crop: str | None = Form(None),
     soil: str | None = Form(None),
 ):
     """Advisory from telemetry. Data source, in order: uploaded CSV, manual readings
@@ -117,6 +142,7 @@ def api_advice(
                                       else days_after_transplanting),
             lat=d["lat"] if lat is None else lat,
             lon=d["lon"] if lon is None else lon,
+            crop=crop,
             soil=soil or d["soil"],
         )
     except ValueError as e:

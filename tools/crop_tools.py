@@ -144,10 +144,11 @@ class GetSoilReadings(Tool):
 class AnalyzeTrend(Tool):
     name = "analyze_trend"
     description = ("Trend of one soil column over the data (slope, min, max, status falling/rising/stable). "
-                   "Columns: moisture, N, P, K, pH, temperature, rainfall.")
-    args_doc = '{"column": "moisture", "days": 7}'
+                   "Columns: moisture, N, P, K, pH, temperature, rainfall. For moisture, also the crop's "
+                   "irrigation trigger.")
+    args_doc = '{"column": "moisture", "days": 7, "crop": "tomato"}'
 
-    def execute(self, column="moisture", days=7, **kw):
+    def execute(self, column="moisture", days=7, crop=None, **kw):
         try:
             rows, cols = _load_rows()
             w = rows[-_int(days, 7):] if len(rows) > _int(days, 7) else rows
@@ -185,9 +186,12 @@ class AnalyzeTrend(Tool):
             }
             if column == "moisture":
                 from config.agronomy import moisture_thresholds
-                t = moisture_thresholds()
-                res["thresholds"] = t
-                res["below_trigger"] = vals[-1] < t["trigger"]
+                try:
+                    t = moisture_thresholds(crop=crop)
+                    res["thresholds"] = t
+                    res["below_trigger"] = vals[-1] < t["trigger"]
+                except ValueError as e:
+                    res["thresholds_note"] = str(e)
             return _out(res)
         except Exception as e:
             return _out({"error": f"trend failed: {e}"})
@@ -237,10 +241,10 @@ class CropRequirements(Tool):
             res, known = _requirements(crop, stage)
             if res is None:
                 return _out({"error": f"no requirements for '{crop}'", "known_crops": known})
-            if res["crop"] == "tomato":
-                from config.agronomy import moisture_thresholds
+            from config.agronomy import load_agronomy, moisture_thresholds
+            if res["crop"] in load_agronomy()["crops"]:
                 res["ideal"].pop("moisture", None)
-                res["moisture_thresholds"] = moisture_thresholds()
+                res["moisture_thresholds"] = moisture_thresholds(crop=res["crop"])
             return _out(res)
         except Exception as e:
             return _out({"error": f"could not read crop requirements: {e}"})
@@ -248,9 +252,11 @@ class CropRequirements(Tool):
 
 class CalculateDosage(Tool):
     name = "calculate_dosage"
-    description = ("Full advisory for tomato from soil_telemetry.csv: decision, urgency, irrigation litres/day and "
-                   "fertilizer kg (urea, DAP, MOP) for the area, using the live 48h forecast, sensor quality checks "
-                   "and safety rules. Stages: seedling, vegetative, flowering, fruiting. Irrigation: drip or flood.")
+    description = ("Full advisory from soil_telemetry.csv: decision, urgency, irrigation litres/day and fertilizer "
+                   "kg (urea, DAP, MOP) for the area, using the live 48h forecast, sensor quality checks and safety "
+                   "rules. Crops: tomato (stages seedling, vegetative, flowering, fruiting), rice (seedling, "
+                   "tillering, flowering, ripening; always flooded), maize and cotton (whole-season targets, "
+                   "stage ignored). Omit stage if unknown. Irrigation: drip or flood.")
     args_doc = '{"crop": "tomato", "area_acres": 1.0, "stage": "flowering", "irrigation": "drip"}'
 
     def execute(self, crop="tomato", area_acres=1.0, stage=None, irrigation="drip", lat=10.79, lon=78.70, **kw):
@@ -258,15 +264,18 @@ class CalculateDosage(Tool):
             import pandas as pd
 
             from agent.advisor import run_advisory
-            if str(crop).lower().strip() != "tomato":
-                return _out({"error": f"dosage model is calibrated for tomato only, not '{crop}'. "
-                                      "Give general advice and say so."})
+            from config.agronomy import load_agronomy, resolve_crop
+            try:
+                crop = resolve_crop(crop)
+            except ValueError:
+                return _out({"error": f"no dose model for '{crop}'. Supported: {list(load_agronomy()['crops'])}. "
+                                      "Use check_crop_suitability and give general advice, saying so."})
             df = pd.read_csv(os.path.join(_data_dir(), "soil_telemetry.csv"))
             if len(df) < 3:
                 return _out({"error": f"only {len(df)} readings. Refusing to calculate a dosage."})
             r = run_advisory(df, area_acres=_num(area_acres, 1.0), irrigation=str(irrigation).lower(),
                              days_after_transplanting=30, lat=_num(lat, 10.79), lon=_num(lon, 78.70),
-                             stage=stage or "vegetative")
+                             crop=crop, stage=stage or None)
             doses = r["doses"] or {}
             fert = doses.get("fertilizer")
             water = doses.get("irrigation")
@@ -275,6 +284,7 @@ class CalculateDosage(Tool):
                 "decision": r["decision"],
                 "urgency": r["urgency"],
                 "why": r["reasons"],
+                "crop": r["crop"],
                 "stage": r["stage"],
                 "area_acres": _num(area_acres, 1.0),
                 "moisture_now_pct": r["readings"]["moisture"],
@@ -298,4 +308,31 @@ class CalculateDosage(Tool):
             return _out({"error": f"dosage failed: {e}"})
 
 
-CROP_TOOLS = [GetSoilReadings, AnalyzeTrend, WeatherForecast, CropRequirements, CalculateDosage]
+class CheckCropSuitability(Tool):
+    name = "check_crop_suitability"
+    description = ("Which of 22 crops (Kaggle Crop Recommendation dataset) best suit the latest soil N, P, K, pH, "
+                   "temperature and humidity in soil_telemetry.csv, and how well a named crop fits. "
+                   "Use for 'what should I grow' or crops without a dose model.")
+    args_doc = '{"crop": "rice"}'
+
+    def execute(self, crop=None, **kw):
+        try:
+            import pandas as pd
+
+            from core.crop_fit import crop_fit
+            df = pd.read_csv(os.path.join(_data_dir(), "soil_telemetry.csv"))
+            cols = {c.lower(): c for c in df.columns}
+
+            def latest(name):
+                col = cols.get(name.lower())
+                vals = pd.to_numeric(df[col], errors="coerce").dropna() if col else []
+                return float(vals.iloc[-1]) if len(vals) else None
+
+            readings = {f: latest(f) for f in ("N", "P", "K", "temperature", "humidity", "ph")}
+            return _out(crop_fit(readings, crop=crop))
+        except Exception as e:
+            return _out({"error": f"crop suitability failed: {e}"})
+
+
+CROP_TOOLS = [GetSoilReadings, AnalyzeTrend, WeatherForecast, CropRequirements, CalculateDosage,
+              CheckCropSuitability]

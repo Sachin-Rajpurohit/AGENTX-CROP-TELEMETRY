@@ -1,7 +1,7 @@
 """Config-driven wrappers around core.dosage_calc (which holds the verified arithmetic)."""
 from __future__ import annotations
 
-from core.dosage_calc import irrigation_plan, plan_fertilizer
+from core.dosage_calc import M2_PER_ACRE, irrigation_plan, plan_fertilizer
 
 IRRIGATION_METHODS = ("drip", "flood")
 
@@ -29,6 +29,17 @@ def effective_rain_mm(rain_mm_48h: float, rain_prob_48h: float, cfg: dict) -> fl
     if rain_prob_48h >= cfg["rain_skip_prob_pct"]:
         return rain_mm_48h * cfg["eff_rain_factor"]
     return 0.0
+
+
+def flood_litres(vwc_now: float, area_acres: float, thresholds: dict, depth_mm: float, cfg: dict,
+                 eff_rain_mm: float = 0.0) -> dict:
+    """Ponded rice: once ponded water is gone (moisture below the trigger), flood to `depth_mm` in one
+    event. Likely rain counts toward the depth. Same keys as irrigation_plan."""
+    net_mm = max(0.0, depth_mm - eff_rain_mm) if vwc_now < thresholds["trigger"] else 0.0
+    litres = net_mm / cfg["efficiency_flood"] * area_acres * M2_PER_ACRE
+    return {"irrigate": net_mm > 0, "deficit_mm": net_mm, "daily_mm": net_mm, "events_per_day": int(net_mm > 0),
+            "litres_per_event": litres, "litres_per_day": litres, "days_to_refill": int(net_mm > 0),
+            "clipped": False}
 
 
 def irrigation_litres(vwc_now: float, area_acres: float, method: str, thresholds: dict, cfg: dict,

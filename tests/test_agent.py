@@ -66,7 +66,14 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(d["urgency"], "RED")
         self.assertEqual(d["moisture_thresholds"]["trigger"], 25.2)
         self.assertAlmostEqual(d["fertilizer_kg_for_area"]["dap"], 120.88, delta=0.02)
-        self.assertIn("error", json.loads(build_tools()["calculate_dosage"].execute(crop="rice")))
+        self.assertIn("error", json.loads(build_tools()["calculate_dosage"].execute(crop="banana")))
+        rice = json.loads(build_tools()["calculate_dosage"].execute(crop="paddy", stage="tillering"))
+        self.assertEqual((rice["crop"], rice["water"]["method"]), ("rice", "flood"))
+
+    def test_crop_suitability_tool(self):
+        d = json.loads(build_tools()["check_crop_suitability"].execute(crop="rice"))
+        self.assertTrue(d["available"])
+        self.assertEqual(d["selected_crop"]["crop"], "rice")
 
     def test_final_answer_is_pipeline_draft_verbatim(self):
         llm = Scripted(['{"thought":"t","action":"calculate_dosage","args":{"crop":"tomato","stage":"flowering"}}',

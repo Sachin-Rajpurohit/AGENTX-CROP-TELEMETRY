@@ -90,3 +90,9 @@ def test_fao56_trigger_per_soil():
     assert moisture_thresholds("clay_loam")["trigger"] == 25.2   # 32 - 0.4 * (32 - 15)
     assert moisture_thresholds("sandy_loam")["trigger"] == 10.4  # 14 - 0.4 * (14 - 5)
     assert moisture_thresholds()["soil"] == "clay_loam"
+    assert moisture_thresholds("clay_loam", crop="rice")["trigger"] == 32  # flooded: re-irrigate below FC
+
+
+def test_flooded_crop_never_gets_drainage_warning():
+    assert rules(moisture=70, flooded=True)["decision"] == "NO_ACTION"  # helper fc is 65
+    assert rules(moisture=70)["decision"] == "DRAINAGE_WARNING"

@@ -21,15 +21,14 @@ temp_min: -5.0            # ASSUMPTION - verify vs TNAU/ICAR
 temp_max: 60.0            # ASSUMPTION - verify vs TNAU/ICAR
 
 # Moisture thresholds (FAO-56 soil water balance, Allen et al. 1998, ch. 8)
-# Telemetry moisture is volumetric water content (%). Irrigate when the crop has used a fraction p of
-# the water held between field capacity and wilting point:
+# Telemetry moisture is volumetric water content (%). Irrigate when the crop has used a fraction p
+# (per crop, see `crops` below) of the water held between field capacity and wilting point:
 #   trigger = FC - p * (FC - PWP)        (FAO-56 eq. 82-83: TAW = FC - PWP, RAW = p * TAW)
-# Irrigation refills the root zone back to FC.
+# Irrigation refills the root zone back to FC. Flooded rice uses its own rule (see `crops.rice`).
 #
 # Not used: the Mendeley tomato dataset's 50% pump trigger (data/tomato_water_sensor_data.json,
 # minTomatoMoisture; pump ON <= 49.98, OFF >= 51.22). That is a normalized capacitive-sensor reading
 # (raw moistureValue ~614), not volumetric water content, so it does not apply to soil_telemetry.csv.
-depletion_fraction_p: 0.40   # FAO-56 Table 22: tomato p = 0.40 (at ETc ~5 mm/day)
 default_soil: clay_loam      # ASSUMPTION - sample data starts at 31% (just below clay-loam FC 32%), consistent with a freshly irrigated clay loam
 soil_types:                  # volumetric water content, %
   clay_loam:
@@ -42,36 +41,37 @@ soil_types:                  # volumetric water content, %
     fc: 14     # Saxton & Rawls (2006): sandy loam FC 0.14 m3/m3
     pwp: 5     # Saxton & Rawls (2006): sandy loam WP 0.05 m3/m3
 
-# Tomato growth-stage targets (primary source: data/crop_requirements.json; TNAU/ICAR as cross-check)
-# NOTE: N/P/K values are fertilizer requirements (kg/ha per stage), NOT soil-test levels.
-tomato_stages:
-  seedling:
-    moisture: 70   # ASSUMPTION - verify vs TNAU/ICAR (soil-moisture target %)
-    N: 40          # ASSUMPTION - verify vs TNAU/ICAR (fertilizer requirement kg/ha)
-    P: 50          # ASSUMPTION - verify vs TNAU/ICAR (fertilizer requirement kg/ha)
-    K: 30          # ASSUMPTION - verify vs TNAU/ICAR (fertilizer requirement kg/ha)
-  vegetative:
-    moisture: 65   # ASSUMPTION - verify vs TNAU/ICAR
-    N: 75          # ASSUMPTION - verify vs TNAU/ICAR
-    P: 40          # ASSUMPTION - verify vs TNAU/ICAR
-    K: 50          # ASSUMPTION - verify vs TNAU/ICAR
-  flowering:
-    moisture: 65   # ASSUMPTION - verify vs TNAU/ICAR
-    N: 100         # ASSUMPTION - verify vs TNAU/ICAR (from stages.flowering, overrides ideal N75)
-    P: 50          # ASSUMPTION - verify vs TNAU/ICAR (from stages.flowering, overrides ideal P40)
-    K: 60          # ASSUMPTION - verify vs TNAU/ICAR (from stages.flowering, overrides ideal K50)
-  fruiting:
-    moisture: 60   # ASSUMPTION - verify vs TNAU/ICAR
-    N: 120         # ASSUMPTION - verify vs TNAU/ICAR
-    P: 60          # ASSUMPTION - verify vs TNAU/ICAR
-    K: 75          # ASSUMPTION - verify vs TNAU/ICAR
-
-# Days after transplanting -> stage (upper bound, inclusive; last stage catches the rest)
-stage_max_days:
-  seedling: 20     # ASSUMPTION - verify vs TNAU/ICAR
-  vegetative: 45   # ASSUMPTION - verify vs TNAU/ICAR
-  flowering: 70    # ASSUMPTION - verify vs TNAU/ICAR
-  fruiting: 9999   # ASSUMPTION - verify vs TNAU/ICAR
+# Crops
+# p = FAO-56 Table 22 depletion fraction (at ETc ~5 mm/day): trigger = FC - p * (FC - PWP).
+# N/P/K targets are fertilizer requirements in kg/ha, copied from data/crop_requirements.json
+# (TNAU Agritech Portal & ICAR). Crops without stage data use one whole-season target.
+# Stage max_days = upper bound of days after transplanting/sowing (inclusive) - ASSUMPTION, verify vs TNAU.
+default_crop: tomato
+crops:
+  tomato:
+    p: 0.40                  # FAO-56 Table 22: tomato
+    stages:
+      seedling:   {max_days: 20,   N: 40,  P: 50, K: 30}
+      vegetative: {max_days: 45,   N: 75,  P: 40, K: 50}
+      flowering:  {max_days: 70,   N: 100, P: 50, K: 60}
+      fruiting:   {max_days: 9999, N: 120, P: 60, K: 75}
+  maize:
+    p: 0.55                  # FAO-56 Table 22: maize, field (grain)
+    targets: {N: 120, P: 60, K: 50}
+  cotton:
+    p: 0.65                  # FAO-56 Table 22: cotton
+    targets: {N: 80, P: 40, K: 40}
+  rice:
+    # Lowland rice is kept ponded, so the dry-down trigger does not apply (FAO-56 gives rice p = 0.20
+    # of saturation). TNAU: irrigate to 5 cm depth once the ponded water has disappeared. Ponded water
+    # gone is approximated as soil moisture below field capacity - ASSUMPTION.
+    flooded: true
+    flood_depth_mm: 50       # TNAU Agritech: irrigate to 5 cm depth
+    stages:
+      seedling:  {max_days: 15,   N: 40,  P: 40, K: 30}
+      tillering: {max_days: 45,   N: 80,  P: 40, K: 40}
+      flowering: {max_days: 85,   N: 100, P: 50, K: 50}
+      ripening:  {max_days: 9999, N: 60,  P: 30, K: 40}
 
 # Per-nutrient use efficiency (ASSUMPTION-tagged; N/P/K differ)
 use_eff_N: 0.60   # ASSUMPTION - verify vs TNAU/ICAR (nitrogen use efficiency)

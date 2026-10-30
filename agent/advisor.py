@@ -9,9 +9,21 @@ from dataclasses import asdict
 
 import pandas as pd
 
-from config.agronomy import load_agronomy, moisture_thresholds, stage_for_days
+from config.agronomy import (
+    WHOLE_SEASON,
+    load_agronomy,
+    moisture_thresholds,
+    resolve_crop,
+    stage_requirement,
+)
 from core.confidence import compute_score
-from core.dosage import effective_rain_mm, irrigation_litres, nutrient_dose
+from core.crop_fit import crop_fit
+from core.dosage import (
+    effective_rain_mm,
+    flood_litres,
+    irrigation_litres,
+    nutrient_dose,
+)
 from core.quality import _resolve_column, check_quality
 from core.rules import fire_rules
 from core.schema import WeatherRisk
@@ -60,6 +72,10 @@ URGENCY = {
     "INSPECT_SENSOR": "RED", "DRAINAGE_WARNING": "RED", "IRRIGATE_THEN_FERTILIZE": "RED", "IRRIGATE": "RED",
     "WAIT_FOR_RAIN": "YELLOW", "DELAY_FERTILIZER": "YELLOW", "FERTILIZE": "YELLOW", "NO_ACTION": "GREEN",
 }
+CROP_NAMES = {"tomato": ("Tomato", "தக்காளி"), "rice": ("Rice", "நெல்"),
+              "maize": ("Maize", "மக்காச்சோளம்"), "cotton": ("Cotton", "பருத்தி")}
+STAGE_NAMES_TA = {"seedling": "நாற்று", "vegetative": "வளர்ச்சி", "flowering": "பூக்கும்", "fruiting": "காய்க்கும்",
+                  "tillering": "தூர்கட்டும்", "ripening": "முதிர்ச்சி", WHOLE_SEASON: "முழுப்"}
 WATER_DECISIONS = {"IRRIGATE", "IRRIGATE_THEN_FERTILIZE"}
 FERTILIZER_DECISIONS = {"FERTILIZE", "IRRIGATE_THEN_FERTILIZE"}
 
@@ -70,6 +86,15 @@ def _latest(df: pd.DataFrame, standard: str) -> float | None:
         return None
     vals = pd.to_numeric(df[col], errors="coerce").dropna()
     return float(vals.iloc[-1]) if len(vals) else None
+
+
+def _csv_crop(df: pd.DataFrame) -> str | None:
+    """Crop named in the telemetry itself (a `crop` or `label` column), if any."""
+    for col in df.columns:
+        if col.lower() in ("crop", "label"):
+            vals = df[col].dropna().astype(str)
+            return vals.iloc[-1] if len(vals) else None
+    return None
 
 
 def _days_of_data(df: pd.DataFrame) -> int:
@@ -83,19 +108,30 @@ def _fmt(n: float, digits: int = 1) -> str:
     return f"{n:,.0f}" if float(n).is_integer() or digits == 0 else f"{n:,.{digits}f}"
 
 
-def _advisory(decision: str, moisture: float, trigger: float, area_acres: float, method: str,
-              doses: dict | None, dawn: bool, confidence: dict) -> dict:
+def _advisory(decision: str, crop: str, stage: str, flooded: bool, moisture: float, trigger: float,
+              area_acres: float, method: str, doses: dict | None, dawn: bool, confidence: dict) -> dict:
     en, ta = [DECISION_TEXT[decision][0]], [DECISION_TEXT[decision][1]]
-    en.append(f"Soil moisture {_fmt(moisture)}% (irrigate below {_fmt(trigger)}%).")
-    ta.append(f"மண் ஈரப்பதம் {_fmt(moisture)}% (இது {_fmt(trigger)}%-க்குக் கீழ் சென்றால் நீர் பாய்ச்சவும்).")
+    crop_en, crop_ta = CROP_NAMES[crop]
+    stage_en = "whole-season targets" if stage == WHOLE_SEASON else f"{stage} stage"
+    en.append(f"Crop: {crop_en}, {stage_en}.")
+    ta.append(f"பயிர்: {crop_ta}, {STAGE_NAMES_TA[stage]} பருவம்.")
+    if flooded:
+        en.append(f"Soil moisture {_fmt(moisture)}% (re-flood once ponded water is gone, below {_fmt(trigger)}%).")
+        ta.append(f"மண் ஈரப்பதம் {_fmt(moisture)}% (தேங்கிய நீர் வடிந்து {_fmt(trigger)}%-க்குக் கீழ் சென்றதும் "
+                  f"மீண்டும் நீர் கட்டவும்).")
+    else:
+        en.append(f"Soil moisture {_fmt(moisture)}% (irrigate below {_fmt(trigger)}%).")
+        ta.append(f"மண் ஈரப்பதம் {_fmt(moisture)}% (இது {_fmt(trigger)}%-க்குக் கீழ் சென்றால் நீர் பாய்ச்சவும்).")
     area = f"{_fmt(area_acres)} acre" + ("" if area_acres == 1 else "s")
 
     if doses and decision in WATER_DECISIONS:
         litres = _fmt(doses["irrigation"]["litres_per_day"], 0)
         events = doses["irrigation"]["events_per_day"]
-        en.append(f"Water: {litres} litres today for {area} by {method}, in {events} session(s)"
+        sessions_en = "in one session" if events == 1 else f"in {events} sessions"
+        sessions_ta = "ஒரே முறையில்" if events == 1 else f"{events} முறையாகப் பிரித்து"
+        en.append(f"Water: {litres} litres today for {area} by {method}, {sessions_en}"
                   + (", before 07:00." if dawn else "."))
-        ta.append(f"நீர்: இன்று {_fmt(area_acres)} ஏக்கருக்கு {litres} லிட்டர், {events} முறையாகப் பிரித்து"
+        ta.append(f"நீர்: இன்று {_fmt(area_acres)} ஏக்கருக்கு {litres} லிட்டர், {sessions_ta}"
                   + (", காலை 7 மணிக்கு முன் பாய்ச்சவும்." if dawn else " பாய்ச்சவும்."))
     if doses and doses.get("fertilizer") and decision in FERTILIZER_DECISIONS:
         kg = doses["fertilizer"]["kg_area"]
@@ -132,13 +168,15 @@ def run_advisory(
     days_after_transplanting: int,
     lat: float,
     lon: float,
+    crop: str | None = None,
     soil: str | None = None,
     stage: str | None = None,
     weather: WeatherRisk | None = None,
     cfg: dict | None = None,
 ) -> dict:
-    """Run the full pipeline on a telemetry frame. `stage` overrides the stage derived from
-    days_after_transplanting. Raises ValueError on unusable input."""
+    """Run the full pipeline on a telemetry frame. `crop` defaults to the telemetry's crop column, then
+    the configured default. `stage` overrides the stage derived from days_after_transplanting.
+    Raises ValueError on unusable input."""
     cfg = cfg or load_agronomy()
     if area_acres <= 0:
         raise ValueError("area_acres must be greater than 0")
@@ -148,14 +186,21 @@ def run_advisory(
     if moisture is None:
         raise ValueError("telemetry needs a numeric 'moisture' column")
 
-    thresholds = moisture_thresholds(soil, cfg)
+    crop = resolve_crop(crop or _csv_crop(df), cfg)
+    crop_cfg = cfg["crops"][crop]
+    flooded = bool(crop_cfg.get("flooded"))
+    method = "flood" if flooded else irrigation
+    thresholds = moisture_thresholds(soil, cfg, crop)
     trigger, fc, pwp = thresholds["trigger"], thresholds["fc"], thresholds["pwp"]
     trace: list[dict] = []
 
     quality = check_quality(df)
     trace.append({"step": "quality", "tool": "check_quality", "observation": asdict(quality)})
+    # A ponded paddy reads a constant, saturated moisture: that flatline is expected, not a fault.
+    ponded = flooded and moisture >= fc
     sensor_fault = any(i.column == "moisture" and i.severity == "CRITICAL"
-                       and i.code in ("FLATLINE", "OUT_OF_RANGE") for i in quality.issues)
+                       and (i.code == "OUT_OF_RANGE" or (i.code == "FLATLINE" and not ponded))
+                       for i in quality.issues)
 
     trends = analyze_trends(df, {"trigger_moisture": trigger, "heat_threshold_c": cfg["heat_threshold_c"]})
     trends_out = {k: asdict(v) for k, v in trends.items()}
@@ -164,10 +209,7 @@ def run_advisory(
     weather = weather or get_weather_risk(lat, lon)
     trace.append({"step": "weather", "tool": "get_weather_risk", "observation": asdict(weather)})
 
-    if stage is not None and stage not in cfg["tomato_stages"]:
-        raise ValueError(f"stage must be one of {list(cfg['tomato_stages'])}, got {stage!r}")
-    stage = stage or stage_for_days(days_after_transplanting, cfg)
-    requirement = {n: cfg["tomato_stages"][stage][n] for n in ("N", "P", "K")}
+    stage, requirement = stage_requirement(crop, stage, days_after_transplanting, cfg)
     measured = {n: _latest(df, n) for n in ("N", "P", "K")}
     missing_npk = any(v is None for v in measured.values())
     fertilizer = None if missing_npk else nutrient_dose(measured, requirement, area_acres, cfg)
@@ -177,8 +219,12 @@ def run_advisory(
                                   "plan": fertilizer and _rounded(fertilizer)}})
 
     eff_rain = effective_rain_mm(weather.rain_mm_48h, weather.rain_prob_48h, cfg)
-    water = irrigation_litres(moisture, area_acres, irrigation, thresholds, cfg, eff_rain_mm=eff_rain)
-    trace.append({"step": "irrigation", "tool": "irrigation_litres",
+    if irrigation not in ("drip", "flood"):
+        irrigation_litres(moisture, area_acres, irrigation, thresholds, cfg)  # raises the method error
+    water = (flood_litres(moisture, area_acres, thresholds, crop_cfg["flood_depth_mm"], cfg, eff_rain_mm=eff_rain)
+             if flooded else
+             irrigation_litres(moisture, area_acres, method, thresholds, cfg, eff_rain_mm=eff_rain))
+    trace.append({"step": "irrigation", "tool": "flood_litres" if flooded else "irrigation_litres",
                   "observation": _rounded({**water, "effective_rain_mm": eff_rain})})
 
     rules = fire_rules(
@@ -192,13 +238,14 @@ def run_advisory(
         tmax_next3=weather.tmax_next3,
         cfg=cfg,
         has_sensor_fault=sensor_fault,
+        flooded=flooded,
     )
     trace.append({"step": "rules", "tool": "fire_rules", "observation": rules})
 
     codes = {(i.code, i.severity) for i in quality.issues}
     score, reasons, level = compute_score(
         cfg,
-        has_flatline=("FLATLINE", "CRITICAL") in codes,
+        has_flatline=("FLATLINE", "CRITICAL") in codes and not ponded,
         has_gap=("GAP", "WARN") in codes,
         has_spike=("SPIKE", "WARN") in codes,
         weather_fallback=weather.source == "fallback",
@@ -209,18 +256,29 @@ def run_advisory(
     confidence = {"score": score, "level": level, "reasons": reasons}
     trace.append({"step": "confidence", "tool": "compute_score", "observation": confidence})
 
+    fit = crop_fit({**measured, "temperature": _latest(df, "temperature"), "humidity": _latest(df, "humidity"),
+                    "ph": _latest(df, "pH")}, crop=crop)
+    trace.append({"step": "crop_fit", "tool": "crop_fit", "observation": fit})
+
     decision = rules["decision"]
     urgency = URGENCY[decision]
     doses = None if sensor_fault else {
         "fertilizer": fertilizer and _rounded(fertilizer),
         "irrigation": _rounded(water),
-        "method": irrigation,
+        "method": method,
     }
-    advisory = _advisory(decision, moisture, trigger, area_acres, irrigation, doses,
+    advisory = _advisory(decision, crop, stage, flooded, moisture, trigger, area_acres, method, doses,
                          "R4_HEAT_DAWN" in rules["fired_rules"], confidence)
+    if flooded:
+        water_rule = (f"rice is kept ponded: re-flood to {crop_cfg['flood_depth_mm']} mm (TNAU) once moisture "
+                      f"drops below field capacity ({trigger}%), flood efficiency")
+    else:
+        water_rule = (f"irrigation trigger={trigger}% = FC - {crop_cfg['p']} x (FC - PWP) (FAO-56 p for {crop}); "
+                      "refill to field capacity, capped per day")
     return {
         "decision": decision,
         "urgency": urgency,
+        "crop": crop,
         "stage": stage,
         "confidence": confidence,
         "rules_fired": rules["fired_rules"],
@@ -233,12 +291,13 @@ def run_advisory(
         "weather": asdict(weather),
         "quality": asdict(quality),
         "trends": trends_out,
+        "crop_fit": fit,
         "assumptions": [
-            f"crop=tomato, stage={stage}",
+            f"crop={crop}, stage={stage}" + (" (no stage-specific targets for this crop)"
+                                             if stage == WHOLE_SEASON else ""),
             f"soil={thresholds['soil']}: field capacity {fc}%, wilting point {pwp}% (volumetric)",
-            f"irrigation trigger={trigger}% = FC - {cfg['depletion_fraction_p']} x (FC - PWP) (FAO-56, tomato p)",
-            "irrigation refills the root zone to field capacity, capped per day",
-            f"N/P/K readings treated as {cfg['npk_unit']} against stage requirements",
+            water_rule,
+            f"N/P/K readings treated as {cfg['npk_unit']} against crop requirements",
             "urea shown is net of the nitrogen already supplied by DAP",
         ],
         "trace": trace,

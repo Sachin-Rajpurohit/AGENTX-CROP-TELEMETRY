@@ -32,7 +32,7 @@ def test_sample_matches_hand_computation():
 
 def test_sample_uses_fao56_clay_loam_trigger():
     r = advise()  # clay loam FC 32, PWP 15, p 0.40 -> trigger 25.2; sample dries 31 -> 22
-    assert r["moisture_thresholds"] == {"soil": "clay_loam", "fc": 32, "pwp": 15, "trigger": 25.2}
+    assert r["moisture_thresholds"] == {"crop": "tomato", "soil": "clay_loam", "fc": 32, "pwp": 15, "trigger": 25.2}
     irr = r["doses"]["irrigation"]
     assert irr["deficit_mm"] == pytest.approx(30.0)  # (32 - 22)% of 300 mm root zone, refilled to FC
     assert irr["daily_mm"] == 8 and irr["days_to_refill"] == 4
@@ -106,12 +106,55 @@ def test_flood_uses_lower_efficiency():
     assert flood == pytest.approx(drip * 0.90 / 0.60, rel=1e-3)
 
 
+def test_crop_comes_from_csv_column():
+    assert advise()["crop"] == "tomato"  # soil_telemetry.csv has crop=tomato
+    assert advise(df=SAMPLE.assign(crop="paddy"))["crop"] == "rice"
+
+
+def test_maize_and_cotton_use_their_own_fao56_p():
+    maize, cotton = advise(crop="maize"), advise(crop="cotton")
+    assert maize["moisture_thresholds"]["trigger"] == 22.65   # 32 - 0.55 * 17
+    assert cotton["moisture_thresholds"]["trigger"] == 20.95  # 32 - 0.65 * 17
+    assert maize["stage"] == cotton["stage"] == "whole_season"
+    assert maize["decision"] == "IRRIGATE_THEN_FERTILIZE"   # 22% < 22.65%
+    assert cotton["decision"] == "FERTILIZE"                # 22% > 20.95%: cotton tolerates drier soil
+    assert maize["doses"]["fertilizer"]["deficit_kg_ha"] == {"N": 80, "P": 40, "K": 20}  # N120 P60 K50 target
+
+
+def test_rice_is_flooded_not_dripped():
+    r = advise(crop="rice", days_after_transplanting=30)
+    assert r["stage"] == "tillering"
+    assert r["doses"]["method"] == "flood"
+    irr = r["doses"]["irrigation"]
+    assert irr["daily_mm"] == 50 and irr["events_per_day"] == 1           # TNAU: flood to 5 cm
+    assert irr["litres_per_day"] == pytest.approx(50 / 0.60 * 4046.86, rel=1e-4)
+    assert "re-flood" in r["advisory"]["en"] and "நெல்" in r["advisory"]["ta"]
+
+
+def test_ponded_rice_is_not_a_sensor_fault_or_drainage_problem():
+    r = advise(df=SAMPLE.assign(moisture=40), crop="rice")
+    assert r["decision"] != "INSPECT_SENSOR" and r["decision"] != "DRAINAGE_WARNING"
+    assert r["doses"]["irrigation"]["irrigate"] is False
+
+
+def test_crop_fit_reported():
+    fit = advise()["crop_fit"]
+    assert fit["available"] and len(fit["best_matches"]) == 3
+    assert fit["selected_crop_in_dataset"] is False  # tomato is not in the Kaggle dataset
+
+
 @pytest.mark.parametrize("df, kw, msg", [
     (SAMPLE.drop(columns=["moisture"]), {}, "moisture"),
     (SAMPLE, {"area_acres": 0}, "area_acres"),
     (SAMPLE, {"irrigation": "sprinkler"}, "irrigation method"),
     (SAMPLE, {"soil": "peat"}, "soil must be one of"),
+    (SAMPLE, {"crop": "banana"}, "crop must be one of"),
+    (SAMPLE, {"crop": "maize", "stage": "flowering"}, None),  # stage ignored for whole-season crops
+    (SAMPLE, {"crop": "rice", "stage": "fruiting"}, "stage for rice must be one of"),
 ])
-def test_bad_input_raises_value_error(df, kw, msg):
+def test_input_validation(df, kw, msg):
+    if msg is None:
+        advise(df=df, **kw)
+        return
     with pytest.raises(ValueError, match=msg):
         advise(df=df, **kw)
