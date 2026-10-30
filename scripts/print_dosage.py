@@ -4,7 +4,7 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import json, math
-from core.dosage_calc import plan_fertilizer, irrigation_litres
+from core.dosage_calc import plan_fertilizer, irrigation_plan
 from core.quality import check_quality
 import pandas as pd
 
@@ -41,7 +41,7 @@ print(f"  urea_net={r['kg_ha']['urea_net']:.2f} kg/ha, area_urea_net={r['kg_area
 # Irrigation
 print("\n--- Irrigation (from dosage_calc) ---")
 vwc_now = df['moisture'].iloc[-1]
-irr = irrigation_litres(vwc_now, 50, 300, 1.0, 0.9, 8, 5)
+irr = irrigation_plan(vwc_now, 50, 300, 1.0, 0.9, 8, 5)
 print(f"vwc_now={vwc_now}, trigger=50")
 print(f"deficit_mm={irr['deficit_mm']:.1f}, daily_mm={irr['daily_mm']:.1f}")
 print(f"litres_per_event={irr['litres_per_event']:.0f} L, litres_per_day={irr['litres_per_day']:.0f} L/acre/day")

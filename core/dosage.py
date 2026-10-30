@@ -1,55 +1,49 @@
+"""Config-driven wrappers around core.dosage_calc (which holds the verified arithmetic)."""
 from __future__ import annotations
 
-from core.dosage_calc import plan_fertilizer, irrigation_plan
+from core.dosage_calc import irrigation_plan, plan_fertilizer
+
+IRRIGATION_METHODS = ("drip", "flood")
 
 
-def nutrient_dose(
-    measured: float,
-    target: float,
-    product_pct: float,
-    use_eff: float,
-    area_acres: float,
-    npk_unit: str = "kg_ha",
-    conversion_factor: float = 1.0,
-    split_policy: str = "single",
-    max_splits: int = 1,
-) -> dict:
-    """Delegate to dosage_calc for the actual computation.
-
-    This maintains the existing API surface while using the verified implementation."""
-    measured_dict = {"N": measured, "P": measured, "K": measured}[
-        measured if isinstance(measured, str) else "N"]
-    requirement_dict = {"N": target, "P": target, "K": target}[
-        target if isinstance(target, str) else "N"]
-
-    cfg = {
+def fertilizer_calc_cfg(cfg: dict) -> dict:
+    """Translate agronomy.yaml keys into the dict plan_fertilizer expects."""
+    return {
         "supply": {"N": 1.0, "P": 1.0, "K": 1.0},
-        "use_eff": {"N": use_eff, "P": use_eff, "K": use_eff},
-        "oxide": {"P": 2.29, "K": 1.2, "N": 1.0},
-        "urea_n_fraction": product_pct,
-        "dap_p2o5_fraction": product_pct,
-        "dap_n_fraction": 0.18,
-        "mop_k2o_fraction": 0.60,
-    }
-
-    result = plan_fertilizer(measured_dict, requirement_dict, cfg, area_acres)
-
-    return {
-        "nutrient_kg_ha": round(result["apply_elemental_kg_ha"]["N"], 2),
-        "product_kg_ha": round(result["kg_ha"]["urea_gross"], 2),
-        "total_kg": round(result["kg_area"]["urea_gross"], 2),
-        "num_splits": 1,
-        "assumptions": [f"delegated to dosage_calc; conversion_factor={conversion_factor}"],
+        "use_eff": {"N": cfg["use_eff_N"], "P": cfg["use_eff_P"], "K": cfg["use_eff_K"]},
+        "oxide": {"P": cfg["p_to_p2o5"], "K": cfg["k_to_k2o"]},
+        "urea_n_fraction": cfg["urea_pct"],
+        "dap_p2o5_fraction": cfg["dap_p2o5_pct"],
+        "dap_n_fraction": cfg["dap_n_pct"],
+        "mop_k2o_fraction": cfg["mop_k2o_pct"],
     }
 
 
-def irrigation_litres(vwc_now, fc, pwp, root_depth_mm, area_m2, efficiency, eff_rain_mm):
-    """Delegate to dosage_calc.irrigation_plan."""
-    result = irrigation_plan(vwc_now, 50, root_depth_mm,  # trigger=50 from org data
-                             area_m2 / 4046.86, efficiency, 8, 5)
-    return {
-        "litres_per_event": result["litres_per_event"],
-        "litres_per_day": result["litres_per_day"],
-        "deficit_mm": result["deficit_mm"],
-        "daily_mm": result["daily_mm"],
-    }
+def nutrient_dose(measured: dict, requirement: dict, area_acres: float, cfg: dict) -> dict:
+    """Urea / DAP / MOP for N/P/K measured vs stage requirement (both kg/ha)."""
+    return plan_fertilizer(measured, requirement, fertilizer_calc_cfg(cfg), area_acres)
+
+
+def effective_rain_mm(rain_mm_48h: float, rain_prob_48h: float, cfg: dict) -> float:
+    """Rain counts toward the water deficit only when it is likely."""
+    if rain_prob_48h >= cfg["rain_skip_prob_pct"]:
+        return rain_mm_48h * cfg["eff_rain_factor"]
+    return 0.0
+
+
+def irrigation_litres(vwc_now: float, area_acres: float, method: str, thresholds: dict, cfg: dict,
+                      eff_rain_mm: float = 0.0) -> dict:
+    """Below the trigger, refill toward field capacity, capped per day and per event for the method."""
+    if method not in IRRIGATION_METHODS:
+        raise ValueError(f"irrigation method must be one of {IRRIGATION_METHODS}, got {method!r}")
+    return irrigation_plan(
+        vwc_now,
+        thresholds["trigger"],
+        cfg["root_depth_mm"],
+        area_acres,
+        cfg[f"efficiency_{method}"],
+        cfg["max_daily_mm"],
+        cfg[f"max_event_mm_{method}"],
+        refill_target=thresholds["fc"],
+        eff_rain_mm=eff_rain_mm,
+    )

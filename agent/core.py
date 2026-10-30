@@ -32,7 +32,7 @@ class AgentExecutor:
 
     def run(self, query, verbose=False):
         messages = [{"role": "user", "content": query}]
-        trace, seen, nudged = [], {}, False
+        trace, seen, nudged, draft = [], {}, False, None
         for step in range(self.max_iterations):
             force_final = any(n > config.MAX_SAME_TOOL_CALLS for n in seen.values())
             if force_final:
@@ -51,19 +51,32 @@ class AgentExecutor:
                              {"role": "user", "content": "Do not answer from memory. Call get_soil_readings first."}]
                 continue
             if "final_answer" in data:
+                answer = draft or str(data["final_answer"])
                 if verbose:
-                    print(f"[Thought] {thought}\n[Final] {data['final_answer']}")
-                return str(data["final_answer"]), trace
+                    print(f"[Thought] {thought}\n[Final] {answer}")
+                return answer, trace
             name, args = data.get("action"), data.get("args") or {}
             key = (name, json.dumps(args, sort_keys=True, default=str))
             seen[key] = seen.get(key, 0) + 1
             observation = self._call_tool(name, args)
+            draft = self._dosage_answer(name, observation) or draft
             trace.append({"thought": thought, "tool": name, "args": args, "observation": observation[:2000]})
             if verbose:
                 print(f"[Thought] {thought}\n[Action] {name}({args})\n[Observation] {observation[:300]}")
             messages += [{"role": "assistant", "content": json.dumps(data)},
                          {"role": "user", "content": f"OBSERVATION: {observation}"}]
-        return self._wrap_up(messages), trace
+        return draft or self._wrap_up(messages), trace
+
+    @staticmethod
+    def _dosage_answer(name, observation):
+        """The deterministic pipeline's answer from a calculate_dosage call, if it produced one.
+        Returned verbatim as the final answer so the LLM cannot alter doses or mistype the Tamil."""
+        if name != "calculate_dosage":
+            return None
+        try:
+            return json.loads(observation).get("answer_draft")
+        except (ValueError, AttributeError):
+            return None
 
     def _call_tool(self, name, args):
         tool = self.tools.get(name)

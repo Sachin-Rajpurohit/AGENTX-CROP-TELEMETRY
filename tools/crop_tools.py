@@ -174,7 +174,7 @@ class AnalyzeTrend(Tool):
             slope = (n * sum_xy - sum_x * sum_y) / denom if denom != 0 else 0.0
 
             status = "falling" if slope < -0.05 else "rising" if slope > 0.05 else "stable"
-            return _out({
+            res = {
                 "column": column,
                 "readings": n,
                 "slope_per_reading": round(slope, 3),
@@ -182,35 +182,31 @@ class AnalyzeTrend(Tool):
                 "max": float(max(vals)),
                 "latest": float(vals[-1]),
                 "status": status
-            })
+            }
+            if column == "moisture":
+                from config.agronomy import moisture_thresholds
+                t = moisture_thresholds()
+                res["thresholds"] = t
+                res["below_trigger"] = vals[-1] < t["trigger"]
+            return _out(res)
         except Exception as e:
             return _out({"error": f"trend failed: {e}"})
 
 
 class WeatherForecast(Tool):
     name = "get_weather_forecast"
-    description = "3-day rain probability (%) and rainfall (mm) from Open-Meteo. Defaults to Tiruchirappalli."
+    description = ("48-hour rain (mm, max probability %) and next-3-day max temperature from Open-Meteo. "
+                   "Defaults to Tiruchirappalli. source='fallback' means the live forecast was unavailable.")
     args_doc = '{"lat": 10.79, "lon": 78.70}'
 
     def execute(self, lat=10.79, lon=78.70, **kw):
-        url = ("https://api.open-meteo.com/v1/forecast?latitude=%s&longitude=%s"
-               "&daily=precipitation_sum,precipitation_probability_max&forecast_days=3"
-               % (_num(lat, 10.79), _num(lon, 78.70)))
-        for _ in range(2):
-            try:
-                req = urllib.request.Request(url, headers={"User-Agent": "AgentX/1.0"})
-                with urllib.request.urlopen(req, timeout=5) as resp:
-                    data = json.loads(resp.read().decode())
-                d = data.get("daily", {})
-                if "precipitation_probability_max" in d:
-                    return _out({
-                        "rain_probability_pct": d["precipitation_probability_max"],
-                        "rain_mm": d["precipitation_sum"],
-                        "days_ahead": [1, 2, 3]
-                    })
-            except Exception:
-                time.sleep(1)
-        return _out({"error": "weather forecast unavailable after retry. Advise conservatively and say so."})
+        from dataclasses import asdict
+
+        from core.weather import get_weather_risk
+        risk = asdict(get_weather_risk(_num(lat, 10.79), _num(lon, 78.70)))
+        if risk["source"] == "fallback":
+            risk["note"] = "Live forecast unavailable; this is a dry fallback. Advise conservatively and say so."
+        return _out(risk)
 
 
 def _requirements(crop, stage=None):
@@ -241,6 +237,10 @@ class CropRequirements(Tool):
             res, known = _requirements(crop, stage)
             if res is None:
                 return _out({"error": f"no requirements for '{crop}'", "known_crops": known})
+            if res["crop"] == "tomato":
+                from config.agronomy import moisture_thresholds
+                res["ideal"].pop("moisture", None)
+                res["moisture_thresholds"] = moisture_thresholds()
             return _out(res)
         except Exception as e:
             return _out({"error": f"could not read crop requirements: {e}"})
@@ -248,71 +248,51 @@ class CropRequirements(Tool):
 
 class CalculateDosage(Tool):
     name = "calculate_dosage"
-    description = ("Fertilizer (N, P, K kg) and irrigation (mm, litres) needed to close the gap between the latest soil "
-                   "readings and the crop's ideal values, for a given area. Capped for safety.")
-    args_doc = '{"crop": "tomato", "area_acres": 1.0, "stage": "flowering"}'
+    description = ("Full advisory for tomato from soil_telemetry.csv: decision, urgency, irrigation litres/day and "
+                   "fertilizer kg (urea, DAP, MOP) for the area, using the live 48h forecast, sensor quality checks "
+                   "and safety rules. Stages: seedling, vegetative, flowering, fruiting. Irrigation: drip or flood.")
+    args_doc = '{"crop": "tomato", "area_acres": 1.0, "stage": "flowering", "irrigation": "drip"}'
 
-    def execute(self, crop="tomato", area_acres=1.0, stage=None, **kw):
+    def execute(self, crop="tomato", area_acres=1.0, stage=None, irrigation="drip", lat=10.79, lon=78.70, **kw):
         try:
-            area = _num(area_acres, 1.0)
-            if area <= 0:
-                return _out({"error": "area_acres must be positive"})
-            req, known = _requirements(crop, stage)
-            if req is None:
-                return _out({"error": f"no requirements for '{crop}'", "known_crops": known})
-            rows, cols = _load_rows()
-            if len(rows) < 3:
-                return _out({"error": f"only {len(rows)} readings. Refusing to calculate a dosage."})
-            latest = rows[-1]
-            ideal, out, notes = req["ideal"], {}, []
+            import pandas as pd
 
-            for n in NUTRIENTS:
-                if n in ideal and n in latest:
-                    try:
-                        latest_n = float(latest[n])
-                        ideal_n = float(ideal[n])
-                        deficit = max(ideal_n - latest_n, 0.0)
-                        kg = deficit / ACRES_PER_HECTARE * area
-                        capped = min(kg, MAX_NUTRIENT_KG_PER_ACRE * area)
-                        out[n] = {
-                            "current": round(latest_n, 2),
-                            "ideal": ideal_n,
-                            "deficit": round(deficit, 2),
-                            "dose_kg": round(capped, 2)
-                        }
-                        if capped < kg:
-                            notes.append(f"{n} dose capped at {MAX_NUTRIENT_KG_PER_ACRE} kg/acre")
-                    except (ValueError, TypeError):
-                        pass
-
-            if "moisture" in ideal and "moisture" in latest:
-                try:
-                    latest_m = float(latest["moisture"])
-                    ideal_m = float(ideal["moisture"])
-                    deficit = max(ideal_m - latest_m, 0.0)
-                    mm = min(deficit / 100.0 * ROOT_ZONE_MM, MAX_WATER_MM)
-                    out["water"] = {
-                        "current_pct": round(latest_m, 2),
-                        "ideal_pct": ideal_m,
-                        "irrigation_mm": round(mm, 1),
-                        "litres": round(mm * LITRES_PER_MM_PER_ACRE * area)
-                    }
-                except (ValueError, TypeError):
-                    pass
-
-            if not out:
-                return _out({"error": "no overlapping columns between soil data and crop requirements",
-                             "soil_columns": list(latest.keys()), "ideal_keys": list(ideal.keys())})
-
+            from agent.advisor import run_advisory
+            if str(crop).lower().strip() != "tomato":
+                return _out({"error": f"dosage model is calibrated for tomato only, not '{crop}'. "
+                                      "Give general advice and say so."})
+            df = pd.read_csv(os.path.join(_data_dir(), "soil_telemetry.csv"))
+            if len(df) < 3:
+                return _out({"error": f"only {len(df)} readings. Refusing to calculate a dosage."})
+            r = run_advisory(df, area_acres=_num(area_acres, 1.0), irrigation=str(irrigation).lower(),
+                             days_after_transplanting=30, lat=_num(lat, 10.79), lon=_num(lon, 78.70),
+                             stage=stage or "vegetative")
+            doses = r["doses"] or {}
+            fert = doses.get("fertilizer")
+            water = doses.get("irrigation")
             return _out({
-                "crop": req["crop"],
-                "stage": req["stage"],
-                "area_acres": area,
-                "dosage": out,
-                "notes": notes,
-                "assumptions": (f"N/P/K read as kg/ha-equivalent, root zone {ROOT_ZONE_MM} mm. "
-                                "Estimate only. Confirm with a local agriculture officer."),
-                "requirements_source": req["source"]
+                "answer_draft": r["answer"],
+                "decision": r["decision"],
+                "urgency": r["urgency"],
+                "why": r["reasons"],
+                "stage": r["stage"],
+                "area_acres": _num(area_acres, 1.0),
+                "moisture_now_pct": r["readings"]["moisture"],
+                "moisture_thresholds": r["moisture_thresholds"],
+                "water": water and {
+                    "litres_today": round(water["litres_per_day"]),
+                    "sessions_today": water["events_per_day"],
+                    "days_to_refill": water["days_to_refill"],
+                    "method": doses["method"],
+                },
+                "fertilizer_kg_for_area": fert and {
+                    "urea": fert["kg_area"]["urea_net"],
+                    "dap": fert["kg_area"]["dap"],
+                    "mop": fert["kg_area"]["mop"],
+                },
+                "weather": r["weather"],
+                "confidence": r["confidence"],
+                "assumptions": r["assumptions"],
             })
         except Exception as e:
             return _out({"error": f"dosage failed: {e}"})

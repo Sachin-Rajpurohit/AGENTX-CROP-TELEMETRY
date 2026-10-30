@@ -21,3 +21,6 @@ venv/
 .aistudio/
 .DS_Store
 Thumbs.db
+
+# weather forecast cache (core/weather.py)
+.cache/

@@ -12,9 +12,8 @@ class Tool:
 
 def build_tools():
     from tools.calculator import Calculator
-    from tools.data_query import ListFiles, ReadFile, SqlQuery
-    from tools.web_search import WebSearch
     from tools.crop_tools import CROP_TOOLS
-    tools = [ListFiles(), ReadFile(), SqlQuery(), Calculator(), WebSearch()]
+    from tools.data_query import ListFiles, ReadFile, SqlQuery
+    tools = [ListFiles(), ReadFile(), SqlQuery(), Calculator()]
     tools += [cls() for cls in CROP_TOOLS]
     return {t.name: t for t in tools}

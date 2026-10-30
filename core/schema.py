@@ -17,6 +17,7 @@ class Issue:
     code: str
     severity: str  # "INFO" | "WARN" | "CRITICAL"
     detail: str
+    column: str | None = None  # standard column name, None for frame-level issues (GAP)
 
 
 @dataclass

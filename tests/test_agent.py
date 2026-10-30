@@ -60,6 +60,21 @@ class AgentTests(unittest.TestCase):
                                                         sql="SELECT moisture FROM data WHERE moisture < 25")))
         self.assertEqual(t["calculator"].execute(expression="2+2*10"), 22)
 
+    def test_calculate_dosage_uses_shared_pipeline(self):
+        d = json.loads(build_tools()["calculate_dosage"].execute(crop="tomato", area_acres=1, stage="flowering"))
+        self.assertEqual(d["decision"], "IRRIGATE_THEN_FERTILIZE")
+        self.assertEqual(d["urgency"], "RED")
+        self.assertEqual(d["moisture_thresholds"]["trigger"], 25.2)
+        self.assertAlmostEqual(d["fertilizer_kg_for_area"]["dap"], 120.88, delta=0.02)
+        self.assertIn("error", json.loads(build_tools()["calculate_dosage"].execute(crop="rice")))
+
+    def test_final_answer_is_pipeline_draft_verbatim(self):
+        llm = Scripted(['{"thought":"t","action":"calculate_dosage","args":{"crop":"tomato","stage":"flowering"}}',
+                        '{"thought":"t","final_answer":"URGENCY: GREEN. ADVICE: made-up numbers"}'])
+        answer, _ = AgentExecutor(llm, build_tools()).run("should I irrigate my tomato?")
+        self.assertTrue(answer.startswith("URGENCY: RED\nADVICE: Soil is dry."))
+        self.assertIn("வறண்டுள்ளது", answer)
+
     def test_cli_contract(self):
         out = subprocess.run([sys.executable, "main.py", "--json", "--dry-run", "hi"], capture_output=True, text=True)
         d = json.loads(out.stdout.strip().splitlines()[-1])

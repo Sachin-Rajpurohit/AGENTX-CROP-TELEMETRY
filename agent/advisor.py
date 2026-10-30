@@ -1,175 +1,245 @@
+"""Deterministic sensor-to-dose pipeline (no LLM).
+
+quality -> trends -> weather -> fertilizer + irrigation doses -> rules -> confidence -> advisory text.
+Every constant comes from config/agronomy.yaml.
+"""
 from __future__ import annotations
 
-import json
-import time
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from dataclasses import asdict
 
-from core.quality import check_quality
+import pandas as pd
+
+from config.agronomy import load_agronomy, moisture_thresholds, stage_for_days
+from core.confidence import compute_score
+from core.dosage import effective_rain_mm, irrigation_litres, nutrient_dose
+from core.quality import _resolve_column, check_quality
+from core.rules import fire_rules
+from core.schema import WeatherRisk
 from core.trends import analyze_trends
 from core.weather import get_weather_risk
-from core.dosage import nutrient_dose, irrigation_litres
-from core.rules import fire_rules
-from core.confidence import compute_score, confidence_level
 
-from config.agronomy import (
-    NPK_UNIT, FC, PWP, TRIGGER_MOISTURE_PCT,
-    USE_EFF, OXIDE_FACTORS, PRODUCT_FRACTIONS,
-    HEAT_THRESHOLD_C,
-)
+DISCLAIMER_EN = "Estimate only. Confirm with a local agriculture officer."
+DISCLAIMER_TA = "இது மதிப்பீடு மட்டுமே. உள்ளூர் வேளாண் அலுவலரிடம் உறுதிப்படுத்தவும்."
 
-
-@dataclass
-class AdvisoryResult:
-    decision: str
-    confidence: dict
-    advisory: dict
-    doses: dict
-    calendar: list
-    impact: dict
-    rules_fired: list[str]
-    assumptions: list[str]
-    trace: list[dict]
-
-
-def _format_number(n: float) -> str:
-    if n == int(n):
-        return str(int(n))
-    return f"{n:.2f}"
-
-
-def _advisory_text(result: AdvisoryResult, language: str = "en") -> str:
-    d = result.decision
-    c = result.confidence
-    reasons = c["reasons"]
-    a = result.doses
-
-    if language == "ta":
-        parts = [
-            f"மூட்டு நிலை: {_format_number(a.get('moisture', 0))}",
-            f"த Pietrainம்: {d}",
-            f"நம்பிக்கை: {c['level']} ({_format_number(c['score'] * 100)}%)",
-        ]
-        if reasons:
-            parts.append(f"உasons: {', '.join(reasons)}")
-        parts.append(f"ச{{_format_number(a.get('litres_per_day', 0))}} Liter/-acre/วัน")
-        return " ".join(parts)
-    else:
-        parts = [
-            f"Decision: {d}",
-            f"Confidence: {c['level']} ({_format_number(c['score'] * 100)}%)",
-        ]
-        if reasons:
-            parts.append(f"Reasons: {', '.join(reasons)}")
-        if "litres_per_day" in a:
-            parts.append(f"Recommended irrigation: {_format_number(a['litres_per_day'])} L/acre/day")
-        if "urea_gross" in a:
-            parts.append(
-                f"Fertilizer: Urea {_format_number(a.get('urea_gross', 0))} kg/ha, "
-                f"DAP {_format_number(a.get('dap', 0))} kg/ha, "
-                f"MOP {_format_number(a.get('mop', 0))} kg/ha"
-            )
-        return ". ".join(parts) + "."
+DECISION_TEXT = {
+    "INSPECT_SENSOR": (
+        "Sensor readings look faulty. Inspect the moisture sensor before acting; no doses are given.",
+        "சென்சார் அளவீடுகள் தவறாகத் தெரிகின்றன. செயல்படும் முன் ஈரப்பதம் சென்சாரைச் சரிபார்க்கவும்; அளவு பரிந்துரை இல்லை.",
+    ),
+    "DRAINAGE_WARNING": (
+        "Soil is too wet. Do not irrigate; check field drainage.",
+        "மண் அதிக ஈரமாக உள்ளது. நீர் பாய்ச்ச வேண்டாம்; வயலின் வடிகாலைச் சரிபார்க்கவும்.",
+    ),
+    "WAIT_FOR_RAIN": (
+        "Rain is likely within 48 hours. Skip irrigation and recheck after the rain.",
+        "48 மணி நேரத்தில் மழை வர வாய்ப்புள்ளது. நீர் பாய்ச்சுவதைத் தவிர்த்து, மழைக்குப் பின் மீண்டும் சரிபார்க்கவும்.",
+    ),
+    "DELAY_FERTILIZER": (
+        "Heavy rain is expected. Delay fertilizer to avoid it washing away.",
+        "கனமழை எதிர்பார்க்கப்படுகிறது. உரம் அடித்துச் செல்லப்படாமல் இருக்க உரமிடுவதைத் தள்ளிப்போடவும்.",
+    ),
+    "IRRIGATE_THEN_FERTILIZE": (
+        "Soil is dry. Irrigate first, then apply fertilizer once the soil is moist.",
+        "மண் வறண்டுள்ளது. முதலில் நீர் பாய்ச்சி, மண் ஈரமான பிறகு உரமிடவும்.",
+    ),
+    "IRRIGATE": (
+        "Soil is dry. Irrigate today.",
+        "மண் வறண்டுள்ளது. இன்று நீர் பாய்ச்சவும்.",
+    ),
+    "FERTILIZE": (
+        "Nutrients are below what the crop needs at this stage. Apply fertilizer.",
+        "இந்த வளர்ச்சி நிலைக்குத் தேவையான சத்துகள் குறைவாக உள்ளன. உரமிடவும்.",
+    ),
+    "NO_ACTION": (
+        "No action needed right now.",
+        "இப்போது எந்த நடவடிக்கையும் தேவையில்லை.",
+    ),
+}
+# RED = act today, YELLOW = act within 2-3 days, GREEN = no action (judges' answer format)
+URGENCY = {
+    "INSPECT_SENSOR": "RED", "DRAINAGE_WARNING": "RED", "IRRIGATE_THEN_FERTILIZE": "RED", "IRRIGATE": "RED",
+    "WAIT_FOR_RAIN": "YELLOW", "DELAY_FERTILIZER": "YELLOW", "FERTILIZE": "YELLOW", "NO_ACTION": "GREEN",
+}
+WATER_DECISIONS = {"IRRIGATE", "IRRIGATE_THEN_FERTILIZE"}
+FERTILIZER_DECISIONS = {"FERTILIZE", "IRRIGATE_THEN_FERTILIZE"}
 
 
-def _run_deterministic_pipeline(
-    df,
+def _latest(df: pd.DataFrame, standard: str) -> float | None:
+    col = _resolve_column(df, standard)
+    if col is None:
+        return None
+    vals = pd.to_numeric(df[col], errors="coerce").dropna()
+    return float(vals.iloc[-1]) if len(vals) else None
+
+
+def _days_of_data(df: pd.DataFrame) -> int:
+    ts_col = _resolve_column(df, "timestamp")
+    if ts_col is None:
+        return len(df)
+    return int(pd.to_datetime(df[ts_col], errors="coerce").dropna().dt.normalize().nunique())
+
+
+def _fmt(n: float, digits: int = 1) -> str:
+    return f"{n:,.0f}" if float(n).is_integer() or digits == 0 else f"{n:,.{digits}f}"
+
+
+def _advisory(decision: str, moisture: float, trigger: float, area_acres: float, method: str,
+              doses: dict | None, dawn: bool, confidence: dict) -> dict:
+    en, ta = [DECISION_TEXT[decision][0]], [DECISION_TEXT[decision][1]]
+    en.append(f"Soil moisture {_fmt(moisture)}% (irrigate below {_fmt(trigger)}%).")
+    ta.append(f"மண் ஈரப்பதம் {_fmt(moisture)}% (இது {_fmt(trigger)}%-க்குக் கீழ் சென்றால் நீர் பாய்ச்சவும்).")
+    area = f"{_fmt(area_acres)} acre" + ("" if area_acres == 1 else "s")
+
+    if doses and decision in WATER_DECISIONS:
+        litres = _fmt(doses["irrigation"]["litres_per_day"], 0)
+        events = doses["irrigation"]["events_per_day"]
+        en.append(f"Water: {litres} litres today for {area} by {method}, in {events} session(s)"
+                  + (", before 07:00." if dawn else "."))
+        ta.append(f"நீர்: இன்று {_fmt(area_acres)} ஏக்கருக்கு {litres} லிட்டர், {events} முறையாகப் பிரித்து"
+                  + (", காலை 7 மணிக்கு முன் பாய்ச்சவும்." if dawn else " பாய்ச்சவும்."))
+    if doses and doses.get("fertilizer") and decision in FERTILIZER_DECISIONS:
+        kg = doses["fertilizer"]["kg_area"]
+        en.append(f"Fertilizer for {area}: Urea {_fmt(kg['urea_net'])} kg, DAP {_fmt(kg['dap'])} kg, "
+                  f"MOP {_fmt(kg['mop'])} kg.")
+        ta.append(f"{_fmt(area_acres)} ஏக்கருக்கு உரம்: யூரியா {_fmt(kg['urea_net'])} கிலோ, "
+                  f"டிஏபி {_fmt(kg['dap'])} கிலோ, பொட்டாஷ் (எம்ஓபி) {_fmt(kg['mop'])} கிலோ.")
+
+    pct = _fmt(confidence["score"] * 100, 0)
+    en.append(f"Confidence: {confidence['level']} ({pct}%).")
+    ta.append(f"நம்பகத்தன்மை: {confidence['level']} ({pct}%).")
+    en.append(DISCLAIMER_EN)
+    ta.append(DISCLAIMER_TA)
+    return {"en": " ".join(en), "ta": " ".join(ta)}
+
+
+def _contract_answer(urgency: str, advisory: dict) -> str:
+    """The judges' answer format: URGENCY / ADVICE / Tamil advice / disclaimer."""
+    en = advisory["en"].removesuffix(" " + DISCLAIMER_EN)
+    ta = advisory["ta"].removesuffix(" " + DISCLAIMER_TA)
+    return f"URGENCY: {urgency}\nADVICE: {en}\nஆலோசனை: {ta}\n{DISCLAIMER_EN}"
+
+
+def _rounded(d: dict, digits: int = 2) -> dict:
+    return {k: (_rounded(v, digits) if isinstance(v, dict)
+                else round(v, digits) if isinstance(v, float) else v)
+            for k, v in d.items()}
+
+
+def run_advisory(
+    df: pd.DataFrame,
     area_acres: float,
     irrigation: str,
     days_after_transplanting: int,
     lat: float,
     lon: float,
-) -> AdvisoryResult:
-    start = time.time()
+    soil: str | None = None,
+    stage: str | None = None,
+    weather: WeatherRisk | None = None,
+    cfg: dict | None = None,
+) -> dict:
+    """Run the full pipeline on a telemetry frame. `stage` overrides the stage derived from
+    days_after_transplanting. Raises ValueError on unusable input."""
+    cfg = cfg or load_agronomy()
+    if area_acres <= 0:
+        raise ValueError("area_acres must be greater than 0")
+    if days_after_transplanting < 0:
+        raise ValueError("days_after_transplanting cannot be negative")
+    moisture = _latest(df, "moisture")
+    if moisture is None:
+        raise ValueError("telemetry needs a numeric 'moisture' column")
 
-    # 1. Quality
-    qr = check_quality(df)
-    trace = [{"step": "quality", "tool": "check_quality", "observation": qr.model_dump()}]
+    thresholds = moisture_thresholds(soil, cfg)
+    trigger, fc, pwp = thresholds["trigger"], thresholds["fc"], thresholds["pwp"]
+    trace: list[dict] = []
 
-    # 2. Trends
-    tr = analyze_trends(df, {})
-    trace.append({"step": "trends", "tool": "analyze_trends", "observation": tr.model_dump()})
+    quality = check_quality(df)
+    trace.append({"step": "quality", "tool": "check_quality", "observation": asdict(quality)})
+    sensor_fault = any(i.column == "moisture" and i.severity == "CRITICAL"
+                       and i.code in ("FLATLINE", "OUT_OF_RANGE") for i in quality.issues)
 
-    # 3. Weather
-    weather = get_weather_risk(lat, lon, days=5)
-    trace.append({"step": "weather", "tool": "get_weather_risk", "observation": weather.model_dump()})
+    trends = analyze_trends(df, {"trigger_moisture": trigger, "heat_threshold_c": cfg["heat_threshold_c"]})
+    trends_out = {k: asdict(v) for k, v in trends.items()}
+    trace.append({"step": "trends", "tool": "analyze_trends", "observation": trends_out})
 
-    # 4. Rules
-    moisture = df["moisture"].iloc[-1] if len(df) > 0 else 0
-    has_sensor_fault = any(i.code in ("FLATLINE", "OUT_OF_RANGE") for i in qr.issues)
-    rules_result = fire_rules(
-        irrigation_needed=trends["days_to_trigger"] is not None,
+    weather = weather or get_weather_risk(lat, lon)
+    trace.append({"step": "weather", "tool": "get_weather_risk", "observation": asdict(weather)})
+
+    if stage is not None and stage not in cfg["tomato_stages"]:
+        raise ValueError(f"stage must be one of {list(cfg['tomato_stages'])}, got {stage!r}")
+    stage = stage or stage_for_days(days_after_transplanting, cfg)
+    requirement = {n: cfg["tomato_stages"][stage][n] for n in ("N", "P", "K")}
+    measured = {n: _latest(df, n) for n in ("N", "P", "K")}
+    missing_npk = any(v is None for v in measured.values())
+    fertilizer = None if missing_npk else nutrient_dose(measured, requirement, area_acres, cfg)
+    fertilizer_due = bool(fertilizer) and any(v > 0 for v in fertilizer["deficit_kg_ha"].values())
+    trace.append({"step": "fertilizer", "tool": "nutrient_dose",
+                  "observation": {"stage": stage, "requirement_kg_ha": requirement, "measured": measured,
+                                  "plan": fertilizer and _rounded(fertilizer)}})
+
+    eff_rain = effective_rain_mm(weather.rain_mm_48h, weather.rain_prob_48h, cfg)
+    water = irrigation_litres(moisture, area_acres, irrigation, thresholds, cfg, eff_rain_mm=eff_rain)
+    trace.append({"step": "irrigation", "tool": "irrigation_litres",
+                  "observation": _rounded({**water, "effective_rain_mm": eff_rain})})
+
+    rules = fire_rules(
+        irrigation_needed=moisture < trigger,
         rain_mm_48h=weather.rain_mm_48h,
         rain_prob_48h=weather.rain_prob_48h,
-        fertilizer_due=trends["npk_slope_per_day"].N < 0
-        or trends["npk_slope_per_day"].P < 0
-        or trends["npk_slope_per_day"].K < 0,
+        fertilizer_due=fertilizer_due,
         moisture=moisture,
-        fc=FC,
+        fc=fc,
+        trigger=trigger,
         tmax_next3=weather.tmax_next3,
-        has_sensor_fault=has_sensor_fault,
-        computed_doses_exceed_cap=False,
+        cfg=cfg,
+        has_sensor_fault=sensor_fault,
     )
-    trace.append({"step": "rules", "tool": "fire_rules", "observation": rules_result})
+    trace.append({"step": "rules", "tool": "fire_rules", "observation": rules})
 
-    # 5. Dosage
-    measured = {
-        "N": df["N"].iloc[-1],
-        "P": df["P"].iloc[-1],
-        "K": df["K"].iloc[-1],
-    }
-    requirement = {"N": 100, "P": 50, "K": 60}
-    dos = nutrient_dose(
-        measured=measured,
-        target=requirement,
-        product_pct=0.46,
-        use_eff=USE_EFF,
-        area_acres=area_acres,
-    )
-    trace.append({"step": "dosage", "tool": "nutrient_dose", "observation": dos})
-
-    # 6. Irrigation
-    vwc_now = df["moisture"].iloc[-1] if len(df) > 0 else 0
-    irr = irrigation_litres(
-        vwc_now=vwc_now,
-        fc=FC,
-        pwp=PWP,
-        root_depth_mm=300,
-        area_m2=area_acres * 4046.86,
-        efficiency=0.90 if irrigation == "drip" else 0.60,
-        eff_rain_mm=weather.rain_mm_48h * 0.8 if weather.rain_prob_48h >= 60 else 0.0,
-    )
-    trace.append({"step": "irrigation", "tool": "irrigation_litres", "observation": irr.model_dump()})
-
-    # 7. Confidence
+    codes = {(i.code, i.severity) for i in quality.issues}
     score, reasons, level = compute_score(
-        has_flatline=has_sensor_fault,
-        has_gap=len(qr.issues) > 0,
+        cfg,
+        has_flatline=("FLATLINE", "CRITICAL") in codes,
+        has_gap=("GAP", "WARN") in codes,
+        has_spike=("SPIKE", "WARN") in codes,
         weather_fallback=weather.source == "fallback",
-        missing_npk=any(c not in df.columns for c in ["N", "P", "K"]),
-        less_than_5_days=len(df) < 5,
+        missing_npk=missing_npk,
+        less_than_5_days=_days_of_data(df) < 5,
+        sensor_fault=sensor_fault,
     )
-    trace.append({
-        "step": "confidence",
-        "tool": "compute_score",
-        "observation": {"score": score, "reasons": reasons, "level": level},
-    })
+    confidence = {"score": score, "level": level, "reasons": reasons}
+    trace.append({"step": "confidence", "tool": "compute_score", "observation": confidence})
 
-    advisory_text_en = _advisory_text(__import__("__main__", fromlist=[""]).AdvisoryResult, "en")
-    advisory_text_ta = _advisory_text(__import__("__main__", fromlist=[""]).AdvisoryResult, "ta")
-
-    return AdvisoryResult(
-        decision=rules_result["decision"],
-        confidence={"level": level, "score": score, "reasons": reasons},
-        advisory={"en": advisory_text_en, "ta": advisory_text_ta},
-        doses=dos,
-        calendar=[],
-        impact={},
-        rules_fired=rules_result["fired_rules"],
-        assumptions=[
-            f"trigger={TRIGGER_MOISTURE_PCT} (from org data: minTomatoMoisture)",
-            f"fc={FC}%, pwp={PWP}% (ASSUMPTION)",
-            f"npk_unit={NPK_UNIT}",
+    decision = rules["decision"]
+    urgency = URGENCY[decision]
+    doses = None if sensor_fault else {
+        "fertilizer": fertilizer and _rounded(fertilizer),
+        "irrigation": _rounded(water),
+        "method": irrigation,
+    }
+    advisory = _advisory(decision, moisture, trigger, area_acres, irrigation, doses,
+                         "R4_HEAT_DAWN" in rules["fired_rules"], confidence)
+    return {
+        "decision": decision,
+        "urgency": urgency,
+        "stage": stage,
+        "confidence": confidence,
+        "rules_fired": rules["fired_rules"],
+        "reasons": rules["reasons"],
+        "advisory": advisory,
+        "answer": _contract_answer(urgency, advisory),
+        "readings": {"moisture": moisture, **measured},
+        "moisture_thresholds": thresholds,
+        "doses": doses,
+        "weather": asdict(weather),
+        "quality": asdict(quality),
+        "trends": trends_out,
+        "assumptions": [
+            f"crop=tomato, stage={stage}",
+            f"soil={thresholds['soil']}: field capacity {fc}%, wilting point {pwp}% (volumetric)",
+            f"irrigation trigger={trigger}% = FC - {cfg['depletion_fraction_p']} x (FC - PWP) (FAO-56, tomato p)",
+            "irrigation refills the root zone to field capacity, capped per day",
+            f"N/P/K readings treated as {cfg['npk_unit']} against stage requirements",
+            "urea shown is net of the nitrogen already supplied by DAP",
         ],
-        trace=trace,
-    )
+        "trace": trace,
+    }

@@ -1,6 +1,8 @@
 """Thin wrapper over the free LLM APIs. Picks Gemini or Groq from environment."""
 import json
 import os
+import re
+import sys
 import time
 
 import config
@@ -13,7 +15,10 @@ class LLM:
         if self.provider == "gemini":
             try:
                 from google import genai
-                self.client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+                from google.genai import types
+                # 20 s per call: a slow or overloaded model falls back instead of stalling the demo
+                self.client = genai.Client(api_key=os.environ["GEMINI_API_KEY"],
+                                           http_options=types.HttpOptions(timeout=20_000))
             except Exception:
                 self.client = None
         elif self.provider == "groq" or os.environ.get("GROQ_API_KEY"):
@@ -29,7 +34,7 @@ class LLM:
     def generate(self, system, messages):
         """messages: list of {"role": "user"|"assistant", "content": str}. Returns text. Retries on 429."""
         if self.client is None:
-            # Autonomous fallback solver when running without external API key
+            print("[llm] no usable LLM client; using the deterministic tool fallback", file=sys.stderr)
             return self._autonomous_fallback(messages)
 
         for attempt in range(4):
@@ -40,6 +45,8 @@ class LLM:
                 if attempt < 3 and ("429" in str(e) or "rate" in str(e).lower() or "quota" in str(e).lower()):
                     time.sleep(2 * (2 ** attempt))
                     continue
+                print(f"[llm] {self.provider} call failed, using the deterministic tool fallback: "
+                      f"{type(e).__name__}: {str(e)[:300]}", file=sys.stderr)
                 return self._autonomous_fallback(messages)
 
     def _call(self, system, messages):
@@ -117,91 +124,42 @@ class LLM:
                 )
             })
 
+        # Agricultural query: run the real tools in order, then answer ONLY from the
+        # calculate_dosage observation (the shared deterministic pipeline). Never canned numbers.
+        stage = next((st for st in ("seedling", "vegetative", "flowering", "fruiting") if st in q_lower), "vegetative")
+        area = re.search(r"(\d+(?:\.\d+)?)\s*acre", q_lower)
+        plan = [
+            ("Read the latest and average soil sensor values.", "get_soil_readings", {"days": 7}),
+            ("Check whether soil moisture is falling, rising or stable.", "analyze_trend",
+             {"column": "moisture", "days": 7}),
+            ("Check 48h rain and heat risk.", "get_weather_forecast", {"lat": 10.79, "lon": 78.70}),
+            ("Compute the decision and exact water and fertilizer doses.", "calculate_dosage",
+             {"crop": "tomato", "area_acres": float(area.group(1)) if area else 1.0, "stage": stage}),
+        ]
         step_count = len([m for m in messages if m["role"] == "assistant"])
+        if step_count < len(plan):
+            thought, action, args = plan[step_count]
+            return json.dumps({"thought": thought, "action": action, "args": args})
 
-        if step_count == 0:
-            return json.dumps({
-                "thought": "Inspect latest and average soil sensor readings from soil_telemetry.csv.",
-                "action": "get_soil_readings",
-                "args": {"days": 7}
-            })
-        elif step_count == 1:
-            return json.dumps({
-                "thought": "Analyze moisture trend to see if soil moisture is falling, rising, or stable.",
-                "action": "analyze_trend",
-                "args": {"column": "moisture", "days": 7}
-            })
-        elif step_count == 2:
-            return json.dumps({
-                "thought": "Retrieve ideal crop requirements for tomato flowering stage.",
-                "action": "get_crop_requirements",
-                "args": {"crop": "tomato", "stage": "flowering"}
-            })
-        elif step_count == 3:
-            return json.dumps({
-                "thought": "Check Open-Meteo weather forecast for rain probability and rainfall volume in mm.",
-                "action": "get_weather_forecast",
-                "args": {"lat": 10.79, "lon": 78.70}
-            })
-        elif step_count == 4:
-            return json.dumps({
-                "thought": "Calculate fertilizer NPK and irrigation water dosage needed.",
-                "action": "calculate_dosage",
-                "args": {"crop": "tomato", "area_acres": 1.0, "stage": "flowering"}
-            })
-        else:
-            first_user_msg = messages[0]["content"] if messages else ""
-            q_lower = first_user_msg.lower()
-
-            if any(k in q_lower for k in ["fertilizer", "npk", "nitrogen", "phosphorus", "potassium", "urea", "dap"]):
-                final_answer = (
-                    "URGENCY: YELLOW\n"
-                    "ADVICE: For tomato at flowering stage, current soil NPK is 40-20-30 kg/ha against ideal 100-50-60 kg/ha. "
-                    "Apply 24.28 kg Nitrogen, 12.14 kg Phosphorus, and 12.14 kg Potassium per acre. "
-                    "Apply in split doses via fertigation to prevent nutrient loss.\n"
-                    "ஆலோசனை: தக்காளி பூக்கும் பருவத்திற்கு ஒரு ஏக்கருக்கு 24.28 கிலோ தழைச்சத்து, 12.14 கிலோ மணிச்சத்து, "
-                    "12.14 கிலோ சாம்பல் சத்து உரம் இடவும்.\n"
-                    "Estimate only. Confirm with a local agriculture officer."
-                )
-            elif any(k in q_lower for k in ["weather", "rain", "precipitation", "forecast", "monsoon"]):
-                final_answer = (
-                    "URGENCY: GREEN\n"
-                    "ADVICE: 3-day meteorological forecast for Tiruchirappalli indicates low rain probability (20% on Day 1, 15% on Day 2). "
-                    "Conditions are favorable for scheduled fertigation and farm field operations.\n"
-                    "ஆலோசனை: அடுத்த 3 நாட்களுக்கு மழை வாய்ப்பு குறைவு (20%). திட்டமிட்ட பாசனம் மற்றும் உரமிடுதல் பணிகளை தொடரலாம்.\n"
-                    "Estimate only. Confirm with a local agriculture officer."
-                )
-            elif any(k in q_lower for k in ["ph", "acid", "alkaline", "lime"]):
-                final_answer = (
-                    "URGENCY: GREEN\n"
-                    "ADVICE: Soil pH is 6.2 (slightly acidic), which is within the optimal 6.0 to 6.8 range for tomato crops. "
-                    "Major soil nutrients are readily available for root absorption. No chemical liming is needed.\n"
-                    "ஆலோசனை: மண் கார அமிலத்தன்மை (pH) 6.2 ஆக உகந்த அளவில் உள்ளது. சுண்ணாம்பு இட வேண்டிய அவசியம் இல்லை.\n"
-                    "Estimate only. Confirm with a local agriculture officer."
-                )
-            elif any(k in q_lower for k in ["rice", "paddy", "thanjavur"]):
-                final_answer = (
-                    "URGENCY: RED\n"
-                    "ADVICE: For rice paddy, current soil moisture is 22%, well below the required 75-85% saturation. "
-                    "Irrigate immediately with 25 mm depth (101,171 litres/acre) to restore standing water and prevent tillering failure.\n"
-                    "ஆலோசனை: நெல் பயிருக்கு மண் ஈரப்பதம் மிகவும் குறைவாக உள்ளது. உடனடியாக பாசனம் செய்து நீர் மட்டத்தை உயர்த்தவும்.\n"
-                    "Estimate only. Confirm with a local agriculture officer."
-                )
-            else:
-                final_answer = (
-                    "URGENCY: RED\n"
-                    "ADVICE: Soil moisture has dropped to 22% with a falling trend (slope -1.214/reading). "
-                    "Irrigate immediately with 25.0 mm (101,171 litres for 1.0 acre) during flowering stage. "
-                    "Apply 24.28 kg Nitrogen fertilizer to relieve nutrient deficit.\n"
-                    "ஆலோசனை: மண் ஈரப்பதம் 22% ஆக குறைந்துள்ளது (இடர் நிலை: சிவப்பு). ஒரு ஏக்கருக்கு 25 மிமீ (101,171 லிட்டர்) "
-                    "நீர்ப்பாசனம் உடனடியாக செய்யவும். 24.28 கிலோ தழைச்சத்து உரம் இடவும்.\n"
-                    "Estimate only. Confirm with a local agriculture officer."
-                )
-
-            return json.dumps({
-                "thought": "Synthesize tool observations into query-specific advisory decision with bilingual support.",
-                "final_answer": final_answer
-            })
+        for m in reversed(messages):
+            if m["role"] == "user" and '"answer_draft"' in m["content"]:
+                try:
+                    obs = json.loads(m["content"].split("OBSERVATION:", 1)[1])
+                    return json.dumps({"thought": "Answer from the calculate_dosage result.",
+                                       "final_answer": obs["answer_draft"]})
+                except (IndexError, ValueError, KeyError):
+                    break
+        return json.dumps({
+            "thought": "The dosage tool did not return a usable result.",
+            "final_answer": (
+                "URGENCY: YELLOW\n"
+                "ADVICE: The advisory tools could not produce a reliable result, so no dose is given. "
+                "Check the sensor data file and try again.\n"
+                "ஆலோசனை: நம்பகமான முடிவு கிடைக்கவில்லை, எனவே அளவு பரிந்துரை இல்லை. "
+                "சென்சார் தரவைச் சரிபார்த்து மீண்டும் முயற்சிக்கவும்.\n"
+                "Estimate only. Confirm with a local agriculture officer."
+            ),
+        })
 
 
 class DryRunLLM:

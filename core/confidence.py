@@ -1,85 +1,50 @@
 """Confidence scoring module.
 
-Score = 1.0 minus weighted deductions from config:
-  flatline 0.35, gap 0.10, spike 0.05, weather fallback 0.15,
-  missing NPK 0.20, <5 days of data 0.15.
-
-Return (score, reasons[]). Map to HIGH/MEDIUM/LOW with the reasons
-shown to the farmer.
+Score = 1.0 minus weighted deductions from config/agronomy.yaml
+(flatline, gap, spike, weather fallback, missing NPK, <5 days of data).
+A sensor fault caps the score (rule R5).
+Mapped to HIGH/MEDIUM/LOW with the reasons shown to the farmer.
 """
 from __future__ import annotations
 
-from typing import List, Tuple
 
-
-# Thresholds for confidence levels
-CONFIDENCE_HIGH = 0.8
-CONFIDENCE_MEDIUM = 0.5
+def confidence_level(score: float, cfg: dict) -> str:
+    if score >= cfg["confidence_high"]:
+        return "HIGH"
+    if score >= cfg["confidence_medium"]:
+        return "MEDIUM"
+    return "LOW"
 
 
 def compute_score(
+    cfg: dict,
     has_flatline: bool = False,
     has_gap: bool = False,
     has_spike: bool = False,
     weather_fallback: bool = False,
     missing_npk: bool = False,
     less_than_5_days: bool = False,
-) -> Tuple[float, List[str]]:
-    """Compute confidence score and deduction reasons.
-
-    Returns (score, reasons) where score is in [0, 1].
-    """
+    sensor_fault: bool = False,
+) -> tuple[float, list[str], str]:
+    """Return (score in [0, 1], reasons, level)."""
+    deductions = [
+        (has_flatline, "deduct_flatline", "flatline sensor reading"),
+        (has_gap, "deduct_gap", "data gap > 2x median interval"),
+        (has_spike, "deduct_spike", "sensor spike detected"),
+        (weather_fallback, "deduct_weather_fallback", "live weather unavailable, used fallback forecast"),
+        (missing_npk, "deduct_missing_npk", "missing NPK readings"),
+        (less_than_5_days, "deduct_lt5_days", "< 5 days of data"),
+    ]
     score = 1.0
-    reasons: List[str] = []
+    reasons: list[str] = []
+    for applies, key, reason in deductions:
+        if applies:
+            score -= cfg[key]
+            reasons.append(reason)
 
-    # FLATLINE deduction
-    if has_flatline:
-        score -= 0.35
-        reasons.append("flatline sensor reading")
+    if sensor_fault and score > cfg["sensor_fault_confidence_cap"]:
+        score = cfg["sensor_fault_confidence_cap"]
+        reasons.append("sensor fault: confidence capped")
 
-    # GAP deduction
-    if has_gap:
-        score -= 0.10
-        reasons.append("data gap > 2x median interval")
-
-    # SPIKE deduction
-    if has_spike:
-        score -= 0.05
-        reasons.append("sensor spike detected")
-
-    # Weather fallback deduction
-    if weather_fallback:
-        score -= 0.15
-        reasons.append("weather API fallback used")
-
-    # Missing NPK deduction
-    if missing_npk:
-        score -= 0.20
-        reasons.append("missing NPK columns in input")
-
-    # <5 days of data deduction
-    if less_than_5_days:
-        score -= 0.15
-        reasons.append("< 5 days of data")
-
-    # Clamp to [0, 1]
-    score = max(0.0, min(1.0, score))
-
-    # Map to level
-    if score >= CONFIDENCE_HIGH:
-        level = "HIGH"
-    elif score >= CONFIDENCE_MEDIUM:
-        level = "MEDIUM"
-    else:
-        level = "LOW"
-
-    return score, reasons, level
-
-
-def confidence_level(score: float) -> str:
-    """Return confidence level string for a given score."""
-    if score >= CONFIDENCE_HIGH:
-        return "HIGH"
-    elif score >= CONFIDENCE_MEDIUM:
-        return "MEDIUM"
-    return "LOW"
+    score = round(max(0.0, min(1.0, score)), 2)
+    return score, reasons, confidence_level(score, cfg)

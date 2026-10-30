@@ -1,11 +1,8 @@
-# Agronomy constants for Sensor-to-Dose Advisor (tomato)
-# Every numeric constant is tagged either "# ASSUMPTION - verify vs TNAU/ICAR"
-# or "# EMPIRICAL from org data" (derived from data/tomato_water_sensor_data.json
-# or data/tomato irrigation dataset.csv).
+# Agronomy constants for the Sensor-to-Dose Advisor (tomato). Code reads every value from here.
+# Each constant names its source (FAO-56, Saxton & Rawls, crop_requirements.json) or is tagged
+# "ASSUMPTION - verify vs TNAU/ICAR".
 
-npk_unit: kg_ha   # kg_ha = targets are fertilizer requirements (kg/ha), NOT soil-test levels.
-                  # Deficit is computed as requirement × deficit_fraction (see core/dosage.py).
-                  # mg_kg = needs bulk-density conversion (not used for tomato).
+npk_unit: kg_ha   # N/P/K readings are compared directly with stage fertilizer requirements (kg/ha).
 
 # Location (default Tiruchirappalli, Tamil Nadu)
 default_lat: 10.79   # ASSUMPTION - verify vs TNAU/ICAR
@@ -23,15 +20,27 @@ ph_max: 10.0              # ASSUMPTION - verify vs TNAU/ICAR
 temp_min: -5.0            # ASSUMPTION - verify vs TNAU/ICAR
 temp_max: 60.0            # ASSUMPTION - verify vs TNAU/ICAR
 
-# Moisture calibration (EMPIRICAL from org data)
-# Source: data/tomato_water_sensor_data.json (393 records, moisturePercentage 0-100, motorValue on/off)
-#   motorValue=1 (pump ON): n=14, moisture 38.22-49.98 (mean 44.43)
-#   motorValue=0 (pump OFF): n=379, moisture 51.22-67.64 (mean 56.99)
-#   Switch gap: pump ON at <= ~50%, OFF at >= ~51%.
-# Source: data/tomato irrigation dataset.csv (3000 rows, raw Soil moisture ADC 120-700, different scale)
-fc_moisture_pct: 65    # ASSUMPTION - verify vs TNAU/ICAR (upper healthy/OFF range; matches crop_requirements ideal moisture)
-pwp_moisture_pct: 40   # ASSUMPTION - verify vs TNAU/ICAR (lower stress range near pump-ON minimum 38.22)
-trigger_moisture_pct: 50   # FROM org data: minTomatoMoisture (50 from JSON; pump switch-on point: max ON 49.98 vs min OFF 51.22)
+# Moisture thresholds (FAO-56 soil water balance, Allen et al. 1998, ch. 8)
+# Telemetry moisture is volumetric water content (%). Irrigate when the crop has used a fraction p of
+# the water held between field capacity and wilting point:
+#   trigger = FC - p * (FC - PWP)        (FAO-56 eq. 82-83: TAW = FC - PWP, RAW = p * TAW)
+# Irrigation refills the root zone back to FC.
+#
+# Not used: the Mendeley tomato dataset's 50% pump trigger (data/tomato_water_sensor_data.json,
+# minTomatoMoisture; pump ON <= 49.98, OFF >= 51.22). That is a normalized capacitive-sensor reading
+# (raw moistureValue ~614), not volumetric water content, so it does not apply to soil_telemetry.csv.
+depletion_fraction_p: 0.40   # FAO-56 Table 22: tomato p = 0.40 (at ETc ~5 mm/day)
+default_soil: clay_loam      # ASSUMPTION - sample data starts at 31% (just below clay-loam FC 32%), consistent with a freshly irrigated clay loam
+soil_types:                  # volumetric water content, %
+  clay_loam:
+    fc: 32     # Saxton & Rawls (2006): clay loam FC 0.32 m3/m3
+    pwp: 15    # Saxton & Rawls (2006): clay loam WP 0.15 m3/m3
+  red_soil:
+    fc: 26     # ASSUMPTION - TN red soils FC 16-19% gravimetric (Malavath & Mani 2018) x bulk density ~1.5
+    pwp: 10    # ASSUMPTION - TN red soils WP 5-8% gravimetric (Malavath & Mani 2018) x bulk density ~1.5
+  sandy_loam:
+    fc: 14     # Saxton & Rawls (2006): sandy loam FC 0.14 m3/m3
+    pwp: 5     # Saxton & Rawls (2006): sandy loam WP 0.05 m3/m3
 
 # Tomato growth-stage targets (primary source: data/crop_requirements.json; TNAU/ICAR as cross-check)
 # NOTE: N/P/K values are fertilizer requirements (kg/ha per stage), NOT soil-test levels.
@@ -57,22 +66,17 @@ tomato_stages:
     P: 60          # ASSUMPTION - verify vs TNAU/ICAR
     K: 75          # ASSUMPTION - verify vs TNAU/ICAR
 
-# Dosage constants
-bulk_density_g_cm3: 1.3   # ASSUMPTION - verify vs TNAU/ICAR (only used if npk_unit == mg_kg)
-sample_depth_m: 0.15      # ASSUMPTION - verify vs TNAU/ICAR (only used if npk_unit == mg_kg)
-# KG_HA_PER_MGKG = bulk_density * sample_depth * 10 = 1.95 (only used if npk_unit == mg_kg)
+# Days after transplanting -> stage (upper bound, inclusive; last stage catches the rest)
+stage_max_days:
+  seedling: 20     # ASSUMPTION - verify vs TNAU/ICAR
+  vegetative: 45   # ASSUMPTION - verify vs TNAU/ICAR
+  flowering: 70    # ASSUMPTION - verify vs TNAU/ICAR
+  fruiting: 9999   # ASSUMPTION - verify vs TNAU/ICAR
 
 # Per-nutrient use efficiency (ASSUMPTION-tagged; N/P/K differ)
 use_eff_N: 0.60   # ASSUMPTION - verify vs TNAU/ICAR (nitrogen use efficiency)
 use_eff_P: 0.50   # ASSUMPTION - verify vs TNAU/ICAR (phosphorus use efficiency)
 use_eff_K: 0.70   # ASSUMPTION - verify vs TNAU/ICAR (potassium use efficiency)
-
-# Split policy per nutrient (ASSUMPTION-tagged)
-split_policy_N: split      # ASSUMPTION - verify vs TNAU/ICAR (N applied in split doses)
-split_policy_P: single     # ASSUMPTION - verify vs TNAU/ICAR (P applied as single basal dose)
-split_policy_K: split      # ASSUMPTION - verify vs TNAU/ICAR (K applied in split doses)
-max_splits_N: 3            # ASSUMPTION - verify vs TNAU/ICAR (max N split count)
-max_splits_K: 2            # ASSUMPTION - verify vs TNAU/ICAR (max K split count)
 
 # Fertilizer products
 urea_pct: 0.46            # ASSUMPTION - verify vs TNAU/ICAR (urea = 46% N)
@@ -82,9 +86,14 @@ mop_k2o_pct: 0.60         # ASSUMPTION - verify vs TNAU/ICAR (MOP = 60% K2O)
 p_to_p2o5: 2.29           # ASSUMPTION - verify vs TNAU/ICAR (elemental P * 2.29 = P2O5)
 k_to_k2o: 1.20            # ASSUMPTION - verify vs TNAU/ICAR (elemental K * 1.20 = K2O)
 
-# Water realism (ASSUMPTION-tagged unless noted)
+# Irrigation
+max_daily_mm: 8           # ASSUMPTION - verify vs TNAU/ICAR (tomato ~8 mm/day max; keeps normal day 10k-40k L/acre)
+root_depth_mm: 300        # ASSUMPTION - verify vs TNAU/ICAR (effective drip root zone; FAO-56 max is 0.7-1.5 m)
+efficiency_drip: 0.90     # ASSUMPTION - verify vs TNAU/ICAR
+efficiency_flood: 0.60    # ASSUMPTION - verify vs TNAU/ICAR
 max_event_mm_drip: 5      # ASSUMPTION - verify vs TNAU/ICAR (max drip irrigation mm per event)
 max_event_mm_flood: 25    # ASSUMPTION - verify vs TNAU/ICAR (max flood irrigation mm per event)
+
 # Confidence deductions
 deduct_flatline: 0.35     # ASSUMPTION - verify vs TNAU/ICAR
 deduct_gap: 0.10          # ASSUMPTION - verify vs TNAU/ICAR
@@ -92,27 +101,11 @@ deduct_spike: 0.05        # ASSUMPTION - verify vs TNAU/ICAR
 deduct_weather_fallback: 0.15 # ASSUMPTION - verify vs TNAU/ICAR
 deduct_missing_npk: 0.20  # ASSUMPTION - verify vs TNAU/ICAR
 deduct_lt5_days: 0.15     # ASSUMPTION - verify vs TNAU/ICAR
-deduct_stale_data: 0.10   # ASSUMPTION - verify vs TNAU/ICAR
+sensor_fault_confidence_cap: 0.40 # ASSUMPTION - verify vs TNAU/ICAR (rule R5)
 confidence_high: 0.70     # ASSUMPTION - verify vs TNAU/ICAR
 confidence_medium: 0.40   # ASSUMPTION - verify vs TNAU/ICAR
 
-# Impact baseline
-baseline_schedule_days: 2     # ASSUMPTION - verify vs TNAU/ICAR (fixed schedule: irrigate every 2 days)
-baseline_volume_mm: 25        # ASSUMPTION - verify vs TNAU/ICAR (standard volume per irrigation)
-price_urea_per_kg: 8.0        # ASSUMPTION - verify vs TNAU/ICAR (INR)
-price_dap_per_kg: 24.0        # ASSUMPTION - verify vs TNAU/ICAR (INR)
-price_mop_per_kg: 20.0        # ASSUMPTION - verify vs TNAU/ICAR (INR)
-price_water_per_kl: 5.0       # ASSUMPTION - verify vs TNAU/ICAR (INR)
-
-# Staleness / demo
-stale_hours: 48               # ASSUMPTION - verify vs TNAU/ICAR
-demo_mode: true               # ASSUMPTION - verify vs TNAU/ICAR (bundled sample: shift dates to today)
-
-max_daily_mm: 8           # ASSUMPTION - verify vs TNAU/ICAR (tomato ~8 mm/day max; keeps normal day 10k-40k L/acre)
-root_depth_mm: 300        # ASSUMPTION - verify vs TNAU/ICAR
-mad: 0.50                 # ASSUMPTION - verify vs TNAU/ICAR (management allowed depletion fraction)
-efficiency_drip: 0.90     # ASSUMPTION - verify vs TNAU/ICAR
-efficiency_flood: 0.60    # ASSUMPTION - verify vs TNAU/ICAR
+# Weather rules
 eff_rain_factor: 0.8      # ASSUMPTION - verify vs TNAU/ICAR (effective rain = 0.8 * rain_mm if prob >= 60)
 rain_skip_threshold_mm: 8   # ASSUMPTION - verify vs TNAU/ICAR
 rain_skip_prob_pct: 60      # ASSUMPTION - verify vs TNAU/ICAR

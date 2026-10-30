@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from config.agronomy import load_agronomy
 from core import schema
 
 SYNONYMS = {
@@ -26,11 +27,14 @@ SYNONYMS = {
 FLATLINE_INFO_ONLY = {"N", "P", "K"}
 FLATLINE_COLUMNS = ["moisture", "temperature", "humidity"]
 
-RANGE_BOUNDS = {
-    "moisture": (0.0, 100.0),
-    "pH": (3.0, 10.0),
-    "temperature": (-5.0, 60.0),
-}
+
+
+def _range_bounds(cfg: dict) -> dict[str, tuple[float, float]]:
+    return {
+        "moisture": (cfg["moisture_min"], cfg["moisture_max"]),
+        "pH": (cfg["ph_min"], cfg["ph_max"]),
+        "temperature": (cfg["temp_min"], cfg["temp_max"]),
+    }
 
 
 def _resolve_column(df: pd.DataFrame, standard: str) -> str | None:
@@ -54,12 +58,15 @@ def _median_interval_hours(df: pd.DataFrame) -> float | None:
         return None
     return float(diffs.median().total_seconds() / 3600.0)
 
-def check_quality(df: pd.DataFrame) -> schema.QualityReport:
+def check_quality(df: pd.DataFrame, cfg: dict | None = None) -> schema.QualityReport:
     """Run quality checks on the telemetry frame.
 
     Detects FLATLINE, OUT_OF_RANGE, SPIKE, GAP and MISSING_COLUMN.  Constant
     N/P/K is reported as an INFO note only — it is not a sensor fault.
     """
+    cfg = cfg or load_agronomy()
+    bounds = _range_bounds(cfg)
+    flat_n, spike_n, spike_k = cfg["flatline_consecutive"], cfg["spike_min_points"], cfg["spike_mad_factor"]
     issues: list[schema.Issue] = []
     interval_h = _median_interval_hours(df)
 
@@ -68,6 +75,7 @@ def check_quality(df: pd.DataFrame) -> schema.QualityReport:
         if _resolve_column(df, standard) is None:
             issues.append(
                 schema.Issue(
+                    column=standard,
                     code="MISSING_COLUMN",
                     severity="WARN",
                     detail=f"required column '{standard}' not found in CSV",
@@ -91,12 +99,13 @@ def check_quality(df: pd.DataFrame) -> schema.QualityReport:
         vals = series.dropna().tolist()
 
         # OUT_OF_RANGE.
-        lo, hi = RANGE_BOUNDS.get(standard, (None, None))
+        lo, hi = bounds.get(standard, (None, None))
         if lo is not None and hi is not None:
             for v in vals:
                 if v < lo or v > hi:
                     issues.append(
                         schema.Issue(
+                            column=standard,
                             code="OUT_OF_RANGE",
                             severity="CRITICAL",
                             detail=f"{standard}={v} outside [{lo}, {hi}]",
@@ -105,11 +114,12 @@ def check_quality(df: pd.DataFrame) -> schema.QualityReport:
                     break
 
         # FLATLINE (only on FLATLINE_COLUMNS; constant N/P/K -> INFO note).
-        if standard in FLATLINE_COLUMNS and len(vals) >= 3:
+        if standard in FLATLINE_COLUMNS and len(vals) >= flat_n:
             run = _consecutive_identical_run(vals)
-            if run >= 3:
+            if run >= flat_n:
                 issues.append(
                     schema.Issue(
+                        column=standard,
                         code="FLATLINE",
                         severity="CRITICAL",
                         detail=f"{standard} flatlined for {run} consecutive readings (last value {vals[-1]})",
@@ -119,6 +129,7 @@ def check_quality(df: pd.DataFrame) -> schema.QualityReport:
             if all(v == vals[0] for v in vals):
                 issues.append(
                     schema.Issue(
+                        column=standard,
                         code="FLATLINE",
                         severity="INFO",
                         detail=f"{standard} constant at {vals[0]} across {len(vals)} readings (expected; no dose impact)",
@@ -126,15 +137,16 @@ def check_quality(df: pd.DataFrame) -> schema.QualityReport:
                 )
 
         # SPIKE (only when 6+ points).
-        if len(vals) >= 6:
+        if len(vals) >= spike_n:
             svals = pd.Series(vals)
             median = float(svals.median())
             mad = float((svals - median).abs().median())
             if mad > 0:
                 for i, v in enumerate(vals):
-                    if abs(v - median) > 4 * mad:
+                    if abs(v - median) > spike_k * mad:
                         issues.append(
                             schema.Issue(
+                                column=standard,
                                 code="SPIKE",
                                 severity="WARN",
                                 detail=(
@@ -151,7 +163,7 @@ def check_quality(df: pd.DataFrame) -> schema.QualityReport:
         if ts_col is not None:
             times = pd.to_datetime(df[ts_col], errors="coerce").dropna().sort_values()
             diffs = times.diff().dropna()
-            gap_threshold_h = interval_h * 2.0
+            gap_threshold_h = interval_h * cfg["gap_max_multiplier"]
             for d in diffs:
                 if d.total_seconds() / 3600.0 > gap_threshold_h:
                     issues.append(
@@ -160,7 +172,7 @@ def check_quality(df: pd.DataFrame) -> schema.QualityReport:
                             severity="WARN",
                             detail=(
                                 f"gap of {d.total_seconds()/3600.0:.1f}h > "
-                                f"{gap_threshold_h:.1f}h (2x median interval)"
+                                f"{gap_threshold_h:.1f}h ({cfg['gap_max_multiplier']:g}x median interval)"
                             ),
                         )
                     )
