@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { CloudRain, FlaskConical, MapPin, MessageCircle } from 'lucide-react';
 import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api, type Advice, type TelemetryRow } from '../api';
-import { AdviceCard, CROP_LABEL, ErrorNote, Spinner, STAGE_LABEL, UrgencyBanner, fmt } from '../components/ui';
+import { AdviceCard, ErrorNote, Spinner, STAGE_LABEL, UrgencyBanner, fmt } from '../components/ui';
+import { cropName, useCrops } from '../crops';
+import { farmSize } from './Farms';
 import { useFarms } from '../farmStore';
 
 const READINGS = [
@@ -22,6 +24,7 @@ const LINKS = [
 
 export default function Home() {
   const { selected: farm, loaded } = useFarms();
+  const crops = useCrops();
   const [rows, setRows] = useState<TelemetryRow[]>([]);
   const [advice, setAdvice] = useState<Advice | null>(null);
   const [error, setError] = useState('');
@@ -42,7 +45,7 @@ export default function Home() {
     return () => {
       current = false;
     };
-  }, [farm?.id, farm?.has_telemetry, farm?.crop, farm?.stage, farm?.area_acres, farm?.soil, farm?.irrigation,
+  }, [farm?.id, farm?.has_telemetry, farm?.crop, farm?.stage, farm?.planted_on, farm?.area_acres, farm?.soil, farm?.irrigation,
       farm?.location.lat, farm?.location.lon]);
 
   const latest = rows[rows.length - 1];
@@ -59,8 +62,8 @@ export default function Home() {
         </h1>
         {farm && (
           <p className="text-lg text-soil-700">
-            <b className="text-soil-900">{farm.name}</b> · {CROP_LABEL[farm.crop]?.en ?? farm.crop}
-            {advice && ` · ${STAGE_LABEL[advice.stage] ?? advice.stage}`} · {fmt(farm.area_acres, 1)} acre(s)
+            <b className="text-soil-900">{farm.name}</b> · {cropName(crops, farm.crop)}
+            {advice && ` · ${STAGE_LABEL[advice.stage] ?? advice.stage}`} · {farmSize(farm)}
             <span className="flex items-center gap-1 text-sm">
               <MapPin className="h-4 w-4" aria-hidden /> {farm.location.name}
             </span>
@@ -69,9 +72,18 @@ export default function Home() {
       </section>
 
       {loaded && !farm && (
-        <p className="card p-6 text-soil-700">
-          No farm yet. <a href="#/farms" className="font-bold text-leaf-800 underline">Add your first farm</a> to get advice.
-        </p>
+        <section className="card space-y-3 p-6 text-center">
+          <p className="text-xl font-bold text-soil-900">
+            Add your farm to get started <span className="tamil block text-lg text-leaf-700">உங்கள் வயலைச் சேர்க்கவும்</span>
+          </p>
+          <p className="text-soil-700">Tell us the crop, its size, where it is and when you planted it.</p>
+          <a
+            href="#/farms"
+            className="inline-block rounded-xl bg-leaf-700 px-6 py-3 text-lg font-bold text-white hover:bg-leaf-800"
+          >
+            Add my farm
+          </a>
+        </section>
       )}
       {farm && !farm.has_telemetry && (
         <p className="card p-6 text-soil-700">

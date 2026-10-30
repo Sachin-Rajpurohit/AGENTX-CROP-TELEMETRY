@@ -96,3 +96,11 @@ def test_fao56_trigger_per_soil():
 def test_flooded_crop_never_gets_drainage_warning():
     assert rules(moisture=70, flooded=True)["decision"] == "NO_ACTION"  # helper fc is 65
     assert rules(moisture=70)["decision"] == "DRAINAGE_WARNING"
+
+
+def test_crop_names_are_forgiving():
+    from config.agronomy import find_crop_in_text, resolve_crop
+    assert [resolve_crop(c) for c in ("Kidney Beans", "pigeon pea", "bananas", "Paddy", "toor")] == [
+        "kidneybeans", "pigeonpeas", "banana", "rice", "pigeonpeas"]
+    assert find_crop_in_text("my 2 acre mango orchard") == "mango"
+    assert find_crop_in_text("what is the price of urea") is None  # "price" must not match "rice"

@@ -48,7 +48,7 @@ def test_advice_from_manual_readings(client):
     ({"irrigation": "sprinkler"}, None),
     ({"area_acres": "-1"}, None),
     ({"soil": "peat"}, None),
-    ({"crop": "banana"}, None),
+    ({"crop": "dragonfruit"}, None),
     ({}, {"csv": ("t.csv", "a,b\n1,2\n", "text/csv")}),  # no moisture column
     ({}, {"csv": ("t.csv", "", "text/csv")}),
 ])
@@ -67,7 +67,7 @@ def test_advice_for_another_crop(client):
 
 def test_crops(client):
     crops = client.get("/api/crops").json()
-    assert set(crops) == {"tomato", "maize", "cotton", "rice"}
+    assert len(crops) == 23 and {"tomato", "maize", "cotton", "rice", "banana", "kidneybeans"} <= set(crops)
     assert crops["rice"]["flooded"] is True and crops["maize"]["stages"] == []
 
 

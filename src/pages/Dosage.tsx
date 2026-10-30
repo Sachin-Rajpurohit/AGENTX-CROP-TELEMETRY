@@ -1,11 +1,11 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { useState, type FormEvent, type ReactNode } from 'react';
 import { ChevronDown, Droplets, FlaskConical, Gauge, Leaf, RotateCcw, Sprout } from 'lucide-react';
-import { api, type Advice, type Crops } from '../api';
+import { api, type Advice } from '../api';
+import { cropName, useCrops } from '../crops';
 import { usePersistedState } from '../persist';
 import { useFarms } from '../farmStore';
 import {
   AdviceCard,
-  CROP_LABEL,
   ErrorNote,
   SOIL_LABEL,
   STAGE_LABEL,
@@ -165,7 +165,7 @@ export function AdviceResult({ advice }: { advice: Advice }) {
               <p className="mt-2 text-xs text-soil-700">
                 {fit.selected_crop
                   ? `Your ${advice.crop}: ${fit.selected_crop.in_range} of ${fit.selected_crop.of} conditions match.`
-                  : `${CROP_LABEL[advice.crop]?.en ?? advice.crop} is not in the 22-crop Kaggle dataset.`}
+                  : `${advice.crop} is not in the 22-crop Kaggle dataset.`}
               </p>
             </>
           ) : (
@@ -211,7 +211,7 @@ export function AdviceResult({ advice }: { advice: Advice }) {
 }
 
 export default function Dosage() {
-  const [crops, setCrops] = useState<Crops | null>(null);
+  const crops = useCrops();
   // Form choices and the last result are saved, so they survive page switches and refreshes.
   // The CSV file itself cannot be saved, so an upload must be chosen again after leaving.
   const [crop, setCrop] = usePersistedState('uzhavan-dose-crop', 'tomato');
@@ -227,10 +227,6 @@ export default function Dosage() {
   const [result, setResult] = usePersistedState<{ advice: Advice; at: string } | null>('uzhavan-dose-result', null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-
-  useEffect(() => {
-    api.crops().then(setCrops).catch((e) => setError(e.message));
-  }, []);
 
   const stages = crops?.[crop]?.stages ?? [];
   const flooded = crops?.[crop]?.flooded ?? false;
@@ -309,9 +305,9 @@ export default function Dosage() {
               setStage('');
             }}
           >
-            {Object.keys(crops ?? CROP_LABEL).map((c) => (
+            {Object.entries(crops ?? { [crop]: { en: crop, ta: '' } }).map(([c, info]) => (
               <option key={c} value={c}>
-                {CROP_LABEL[c]?.en ?? c} – {CROP_LABEL[c]?.ta ?? ''}
+                {info.en} – {info.ta}
               </option>
             ))}
           </select>
@@ -428,7 +424,7 @@ export default function Dosage() {
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-soil-700">
             <span>
-              Result for {CROP_LABEL[result.advice.crop]?.en ?? result.advice.crop}, calculated at{' '}
+              Result for {cropName(crops, result.advice.crop)}, calculated at{' '}
               {new Date(result.at).toLocaleString('en-IN', { hour: 'numeric', minute: '2-digit', day: 'numeric', month: 'short' })}
               . Calculate again for the latest weather.
             </span>

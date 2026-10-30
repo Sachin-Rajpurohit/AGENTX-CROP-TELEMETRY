@@ -24,6 +24,7 @@ def compute_score(
     weather_fallback: bool = False,
     missing_npk: bool = False,
     less_than_5_days: bool = False,
+    dataset_targets: bool = False,
     sensor_fault: bool = False,
 ) -> tuple[float, list[str], str]:
     """Return (score in [0, 1], reasons, level)."""
@@ -34,6 +35,7 @@ def compute_score(
         (weather_fallback, "deduct_weather_fallback", "live weather unavailable, used fallback forecast"),
         (missing_npk, "deduct_missing_npk", "missing NPK readings"),
         (less_than_5_days, "deduct_lt5_days", "< 5 days of data"),
+        (dataset_targets, "deduct_dataset_targets", "fertilizer target from crop dataset, not a TNAU recommendation"),
     ]
     score = 1.0
     reasons: list[str] = []

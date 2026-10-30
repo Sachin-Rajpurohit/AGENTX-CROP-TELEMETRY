@@ -11,10 +11,12 @@ import pandas as pd
 
 from config.agronomy import (
     WHOLE_SEASON,
+    crop_names,
     load_agronomy,
     moisture_thresholds,
     resolve_crop,
     stage_requirement,
+    targets_from_dataset,
 )
 from core.confidence import compute_score
 from core.crop_fit import crop_fit
@@ -72,8 +74,6 @@ URGENCY = {
     "INSPECT_SENSOR": "RED", "DRAINAGE_WARNING": "RED", "IRRIGATE_THEN_FERTILIZE": "RED", "IRRIGATE": "RED",
     "WAIT_FOR_RAIN": "YELLOW", "DELAY_FERTILIZER": "YELLOW", "FERTILIZE": "YELLOW", "NO_ACTION": "GREEN",
 }
-CROP_NAMES = {"tomato": ("Tomato", "தக்காளி"), "rice": ("Rice", "நெல்"),
-              "maize": ("Maize", "மக்காச்சோளம்"), "cotton": ("Cotton", "பருத்தி")}
 STAGE_NAMES_TA = {"seedling": "நாற்று", "vegetative": "வளர்ச்சி", "flowering": "பூக்கும்", "fruiting": "காய்க்கும்",
                   "tillering": "தூர்கட்டும்", "ripening": "முதிர்ச்சி", WHOLE_SEASON: "முழுப்"}
 WATER_DECISIONS = {"IRRIGATE", "IRRIGATE_THEN_FERTILIZE"}
@@ -111,7 +111,7 @@ def _fmt(n: float, digits: int = 1) -> str:
 def _advisory(decision: str, crop: str, stage: str, flooded: bool, moisture: float, trigger: float,
               area_acres: float, method: str, doses: dict | None, dawn: bool, confidence: dict) -> dict:
     en, ta = [DECISION_TEXT[decision][0]], [DECISION_TEXT[decision][1]]
-    crop_en, crop_ta = CROP_NAMES[crop]
+    crop_en, crop_ta = crop_names(crop)
     stage_en = "whole-season targets" if stage == WHOLE_SEASON else f"{stage} stage"
     en.append(f"Crop: {crop_en}, {stage_en}.")
     ta.append(f"பயிர்: {crop_ta}, {STAGE_NAMES_TA[stage]} பருவம்.")
@@ -135,10 +135,12 @@ def _advisory(decision: str, crop: str, stage: str, flooded: bool, moisture: flo
                   + (", காலை 7 மணிக்கு முன் பாய்ச்சவும்." if dawn else " பாய்ச்சவும்."))
     if doses and doses.get("fertilizer") and decision in FERTILIZER_DECISIONS:
         kg = doses["fertilizer"]["kg_area"]
-        en.append(f"Fertilizer for {area}: Urea {_fmt(kg['urea_net'])} kg, DAP {_fmt(kg['dap'])} kg, "
-                  f"MOP {_fmt(kg['mop'])} kg.")
-        ta.append(f"{_fmt(area_acres)} ஏக்கருக்கு உரம்: யூரியா {_fmt(kg['urea_net'])} கிலோ, "
-                  f"டிஏபி {_fmt(kg['dap'])} கிலோ, பொட்டாஷ் (எம்ஓபி) {_fmt(kg['mop'])} கிலோ.")
+        # Leave out products with no dose (e.g. urea when DAP already supplies the nitrogen).
+        products = [(en_name, ta_name, kg[key]) for key, en_name, ta_name in (
+            ("urea_net", "Urea", "யூரியா"), ("dap", "DAP", "டிஏபி"), ("mop", "MOP", "பொட்டாஷ் (எம்ஓபி)"))
+            if round(kg[key], 1) > 0]
+        en.append(f"Fertilizer for {area}: " + ", ".join(f"{n} {_fmt(v)} kg" for n, _, v in products) + ".")
+        ta.append(f"{_fmt(area_acres)} ஏக்கருக்கு உரம்: " + ", ".join(f"{t} {_fmt(v)} கிலோ" for _, t, v in products) + ".")
 
     pct = _fmt(confidence["score"] * 100, 0)
     en.append(f"Confidence: {confidence['level']} ({pct}%).")
@@ -251,6 +253,7 @@ def run_advisory(
         weather_fallback=weather.source == "fallback",
         missing_npk=missing_npk,
         less_than_5_days=_days_of_data(df) < 5,
+        dataset_targets=targets_from_dataset(crop, cfg) and not missing_npk,
         sensor_fault=sensor_fault,
     )
     confidence = {"score": score, "level": level, "reasons": reasons}
@@ -298,6 +301,8 @@ def run_advisory(
             f"soil={thresholds['soil']}: field capacity {fc}%, wilting point {pwp}% (volumetric)",
             water_rule,
             f"N/P/K readings treated as {cfg['npk_unit']} against crop requirements",
+            *([f"no TNAU recommendation for {crop} here: N/P/K target {requirement} is the median of its rows in "
+               "the Kaggle Crop Recommendation dataset"] if targets_from_dataset(crop, cfg) else []),
             "urea shown is net of the nitrogen already supplied by DAP",
         ],
         "trace": trace,

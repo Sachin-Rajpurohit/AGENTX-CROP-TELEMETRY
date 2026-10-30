@@ -1,7 +1,7 @@
 """Farm storage: one JSON file of farms plus one sensor CSV per farm.
 
-Lives in AGENTX_FARM_DIR (default .farmdata/, git-ignored). On first use it creates a demo
-farm from data/soil_telemetry.csv so the app works out of the box.
+Lives in AGENTX_FARM_DIR (default .farmdata/, git-ignored). Farmers add their own farms; a farm
+without a sensor file can copy the sample data/soil_telemetry.csv to try the app.
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import os
 import shutil
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -24,17 +24,6 @@ TELEMETRY_NAME = "soil_telemetry.csv"
 MAX_CSV_BYTES = 2 * 1024 * 1024
 _lock = threading.Lock()
 
-DEMO_FARM = {
-    "name": "Demo tomato plot",
-    "crop": "tomato",
-    "stage": None,
-    "area_acres": 1.0,
-    "irrigation": "drip",
-    "soil": "clay_loam",
-    "location": {"name": "Tiruchirappalli, Tamil Nadu, India", "lat": 10.79, "lon": 78.70},
-}
-
-
 class FarmError(ValueError):
     """Bad farm input or unusable sensor file (shown to the user)."""
 
@@ -45,7 +34,7 @@ def _index_path() -> Path:
 
 def _read() -> list[dict]:
     if not _index_path().exists():
-        _seed()
+        return []
     return json.loads(_index_path().read_text(encoding="utf-8"))["farms"]
 
 
@@ -56,14 +45,6 @@ def _write(farms: list[dict]) -> None:
     tmp.replace(_index_path())
 
 
-def _seed() -> None:
-    farm = {**DEMO_FARM, "id": uuid.uuid4().hex[:8], "created_at": _now()}
-    farm_dir = FARM_DIR / farm["id"]
-    farm_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(Path(DATA_DIR) / TELEMETRY_NAME, farm_dir / TELEMETRY_NAME)
-    _write([farm])
-
-
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")  # noqa: UP017 - datetime.UTC needs Python 3.11
 
@@ -72,8 +53,16 @@ def telemetry_path(farm_id: str) -> Path:
     return FARM_DIR / farm_id / TELEMETRY_NAME
 
 
+def days_since_planting(farm: dict) -> int | None:
+    """Days since the farm's sowing/transplanting date, or None when no date is set."""
+    if not farm.get("planted_on"):
+        return None
+    return max(0, (date.today() - date.fromisoformat(farm["planted_on"])).days)
+
+
 def _public(farm: dict) -> dict:
-    return {**farm, "has_telemetry": telemetry_path(farm["id"]).exists()}
+    return {**farm, "has_telemetry": telemetry_path(farm["id"]).exists(),
+            "days_since_planting": days_since_planting(farm)}
 
 
 def list_farms() -> list[dict]:
@@ -138,6 +127,11 @@ def save_telemetry(farm_id: str, data: bytes) -> pd.DataFrame:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
     return df
+
+
+def use_sample_telemetry(farm_id: str) -> pd.DataFrame:
+    """Give a farm the bundled sample sensor file (for trying the app without a sensor)."""
+    return save_telemetry(farm_id, (Path(DATA_DIR) / TELEMETRY_NAME).read_bytes())
 
 
 def load_telemetry(farm_id: str) -> pd.DataFrame | None:

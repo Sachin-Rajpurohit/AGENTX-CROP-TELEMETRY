@@ -14,6 +14,7 @@ Endpoints:
   GET  /api/geocode?q=...                 search any place by name (Open-Meteo geocoding)
   GET|POST /api/farms, GET|PUT|DELETE /api/farms/{id}      the farmer's fields
   GET|POST /api/farms/{id}/telemetry      a farm's sensor readings (POST: upload CSV)
+  POST /api/farms/{id}/sample-data        give a farm the bundled sample sensor file
   POST /api/farms/{id}/advice             advisory for a farm with its own data and settings
 """
 from __future__ import annotations
@@ -21,6 +22,8 @@ from __future__ import annotations
 import io
 import os
 import re
+from datetime import date
+from typing import Literal
 from pathlib import Path
 
 import pandas as pd
@@ -35,7 +38,7 @@ import farm_store
 from agent.advisor import run_advisory
 from agent.prompt_builder import farm_role
 from config import DATA_DIR
-from config.agronomy import crop_stages, load_agronomy, resolve_crop
+from config.agronomy import crop_names, crop_stages, load_agronomy, resolve_crop, targets_from_dataset
 from core.crop_fit import crop_fit
 from core.dosage import IRRIGATION_METHODS
 from core.weather import get_daily_forecast
@@ -96,9 +99,16 @@ def _farm_or_404(farm_id: str) -> dict:
 def _farm_context(farm: dict) -> dict:
     """Flat values the agent tools read for the selected farm."""
     return {"name": farm["name"], "crop": farm["crop"], "stage": farm.get("stage"),
+            "days_after_transplanting": _farm_days(farm),
             "area_acres": farm["area_acres"], "irrigation": farm["irrigation"], "soil": farm["soil"],
             "lat": farm["location"]["lat"], "lon": farm["location"]["lon"],
             "telemetry_path": str(farm_store.telemetry_path(farm["id"]))}
+
+
+def _farm_days(farm: dict) -> int:
+    """Days after sowing/transplanting for stage lookup (30 when no date is set)."""
+    days = farm.get("days_since_planting")
+    return 30 if days is None else days
 
 
 class Location(BaseModel):
@@ -111,7 +121,9 @@ class FarmIn(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     crop: str
     stage: str | None = None
+    planted_on: date | None = None
     area_acres: float = Field(gt=0, le=10_000)
+    area_unit: Literal["acre", "cent", "hectare"] = "acre"
     irrigation: str = "drip"
     soil: str = "clay_loam"
     location: Location
@@ -131,7 +143,11 @@ def _validated(body: FarmIn) -> dict:
         raise HTTPException(400, f"irrigation must be one of {list(IRRIGATION_METHODS)}")
     if body.soil not in cfg["soil_types"]:
         raise HTTPException(400, f"soil must be one of {list(cfg['soil_types'])}")
-    return {"name": body.name.strip(), "crop": crop, "stage": stage, "area_acres": body.area_acres,
+    if body.planted_on and body.planted_on > date.today():
+        raise HTTPException(400, "planting date cannot be in the future")
+    return {"name": body.name.strip(), "crop": crop, "stage": stage,
+            "planted_on": body.planted_on.isoformat() if body.planted_on else None,
+            "area_acres": body.area_acres, "area_unit": body.area_unit,
             "irrigation": irrigation, "soil": body.soil, "location": body.location.model_dump()}
 
 
@@ -260,6 +276,14 @@ def api_upload_farm_telemetry(farm_id: str, csv: UploadFile = File(...)):
     return {"rows": len(df), "farm": farm_store.get_farm(farm_id)}
 
 
+@app.post("/api/farms/{farm_id}/sample-data")
+def api_farm_sample_data(farm_id: str):
+    """Copy the bundled sample sensor file to a farm, for trying the app without a sensor."""
+    _farm_or_404(farm_id)
+    df = farm_store.use_sample_telemetry(farm_id)
+    return {"rows": len(df), "farm": farm_store.get_farm(farm_id)}
+
+
 @app.post("/api/farms/{farm_id}/advice")
 def api_farm_advice(farm_id: str):
     """Advisory for a farm using its own sensor data, crop, stage, area, soil and location."""
@@ -269,7 +293,7 @@ def api_farm_advice(farm_id: str):
         raise HTTPException(400, f"{farm['name']} has no sensor data yet. Upload a CSV on the Farms page.")
     try:
         result = run_advisory(df, area_acres=farm["area_acres"], irrigation=farm["irrigation"],
-                              days_after_transplanting=30, lat=farm["location"]["lat"],
+                              days_after_transplanting=_farm_days(farm), lat=farm["location"]["lat"],
                               lon=farm["location"]["lon"], crop=farm["crop"], stage=farm.get("stage"),
                               soil=farm["soil"])
     except ValueError as e:
@@ -279,10 +303,13 @@ def api_farm_advice(farm_id: str):
 
 @app.get("/api/crops")
 def api_crops():
-    """Crops with dose models. Crops without stages use one whole-season target."""
+    """Crops with dose models, with display names and where their N/P/K targets come from.
+    Crops without stages use one whole-season target."""
     cfg = load_agronomy()
-    return {name: {"stages": crop_stages(name, cfg), "flooded": bool(c.get("flooded")), "fao56_p": c.get("p")}
-            for name, c in cfg["crops"].items()}
+    return {name: {"en": crop_names(name, cfg)[0], "ta": crop_names(name, cfg)[1],
+                   "stages": crop_stages(name, cfg), "flooded": bool(c.get("flooded")), "fao56_p": c.get("p"),
+                   "targets_source": "dataset" if targets_from_dataset(name, cfg) else "tnau"}
+            for name, c in sorted(cfg["crops"].items(), key=lambda kv: crop_names(kv[0], cfg)[0])}
 
 
 @app.get("/api/crop-fit")

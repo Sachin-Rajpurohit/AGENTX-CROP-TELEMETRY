@@ -127,9 +127,8 @@ class LLM:
         # Agricultural query: run the real tools in order, then answer ONLY from the
         # calculate_dosage observation (the shared deterministic pipeline). Never canned numbers.
         # Crop, stage and area from the question; anything not named falls back to the selected farm.
-        crop = next((c for c, words in (("rice", ("rice", "paddy")), ("maize", ("maize", "corn")),
-                                         ("cotton", ("cotton",)), ("tomato", ("tomato",)))
-                     if any(w in q_lower for w in words)), None)
+        from config.agronomy import find_crop_in_text
+        crop = find_crop_in_text(q_lower)
         stage = next((st for st in ("seedling", "vegetative", "flowering", "fruiting", "tillering", "ripening")
                       if st in q_lower), None)
         area = re.search(r"(\d+(?:\.\d+)?)\s*acre", q_lower)

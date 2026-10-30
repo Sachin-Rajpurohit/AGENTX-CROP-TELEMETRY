@@ -148,7 +148,7 @@ def test_crop_fit_reported():
     (SAMPLE, {"area_acres": 0}, "area_acres"),
     (SAMPLE, {"irrigation": "sprinkler"}, "irrigation method"),
     (SAMPLE, {"soil": "peat"}, "soil must be one of"),
-    (SAMPLE, {"crop": "banana"}, "crop must be one of"),
+    (SAMPLE, {"crop": "dragonfruit"}, "crop must be one of"),
     (SAMPLE, {"crop": "maize", "stage": "flowering"}, None),  # stage ignored for whole-season crops
     (SAMPLE, {"crop": "rice", "stage": "fruiting"}, "stage for rice must be one of"),
 ])
@@ -158,3 +158,27 @@ def test_input_validation(df, kw, msg):
         return
     with pytest.raises(ValueError, match=msg):
         advise(df=df, **kw)
+
+
+def test_every_kaggle_crop_has_a_dose_model():
+    import pandas as pd
+    from config import DATA_DIR
+    labels = set(pd.read_csv(f"{DATA_DIR}/Crop_recommendation.csv")["label"])
+    for crop in labels:
+        r = advise(crop=crop)
+        assert r["crop"] == crop and r["doses"]["fertilizer"] is not None
+
+
+def test_dataset_crops_use_kaggle_medians_and_say_so():
+    r = advise(crop="banana")
+    assert r["doses"]["fertilizer"]["deficit_kg_ha"] == {"N": 60.5, "P": 61.0, "K": 20.0}  # medians N100.5 P81 K50
+    assert r["confidence"]["score"] == 0.90
+    assert "fertilizer target from crop dataset, not a TNAU recommendation" in r["confidence"]["reasons"]
+    assert any("Kaggle" in a for a in r["assumptions"])
+    assert r["moisture_thresholds"]["trigger"] == 26.05  # FAO-56 banana p 0.35
+    assert "Urea" not in r["advisory"]["en"]  # DAP's nitrogen covers the need, so no zero-kg urea line
+    assert "வாழை" in r["advisory"]["ta"]
+
+
+def test_tnau_crops_keep_full_confidence():
+    assert advise(crop="maize")["confidence"]["score"] == 1.0

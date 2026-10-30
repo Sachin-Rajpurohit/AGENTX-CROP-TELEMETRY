@@ -43,12 +43,18 @@ soil_types:                  # volumetric water content, %
 
 # Crops
 # p = FAO-56 Table 22 depletion fraction (at ETc ~5 mm/day): trigger = FC - p * (FC - PWP).
-# N/P/K targets are fertilizer requirements in kg/ha, copied from data/crop_requirements.json
-# (TNAU Agritech Portal & ICAR). Crops without stage data use one whole-season target.
+# ta = Tamil name shown to farmers.
+# N/P/K targets:
+#   - tomato, rice, maize, cotton: fertilizer requirements in kg/ha from data/crop_requirements.json
+#     (TNAU Agritech Portal & ICAR). Crops without stage data use one whole-season target.
+#   - targets: dataset -> no TNAU recommendation available here; the target is the MEDIAN N/P/K of that
+#     crop's 100 rows in data/Crop_recommendation.csv (Kaggle), i.e. the typical level where the crop
+#     grows well. Results say so and confidence is reduced (deduct_dataset_targets).
 # Stage max_days = upper bound of days after transplanting/sowing (inclusive) - ASSUMPTION, verify vs TNAU.
 default_crop: tomato
 crops:
   tomato:
+    ta: தக்காளி
     p: 0.40                  # FAO-56 Table 22: tomato
     stages:
       seedling:   {max_days: 20,   N: 40,  P: 50, K: 30}
@@ -56,15 +62,18 @@ crops:
       flowering:  {max_days: 70,   N: 100, P: 50, K: 60}
       fruiting:   {max_days: 9999, N: 120, P: 60, K: 75}
   maize:
+    ta: மக்காச்சோளம்
     p: 0.55                  # FAO-56 Table 22: maize, field (grain)
     targets: {N: 120, P: 60, K: 50}
   cotton:
+    ta: பருத்தி
     p: 0.65                  # FAO-56 Table 22: cotton
     targets: {N: 80, P: 40, K: 40}
   rice:
     # Lowland rice is kept ponded, so the dry-down trigger does not apply (FAO-56 gives rice p = 0.20
     # of saturation). TNAU: irrigate to 5 cm depth once the ponded water has disappeared. Ponded water
     # gone is approximated as soil moisture below field capacity - ASSUMPTION.
+    ta: நெல்
     flooded: true
     flood_depth_mm: 50       # TNAU Agritech: irrigate to 5 cm depth
     stages:
@@ -72,6 +81,26 @@ crops:
       tillering: {max_days: 45,   N: 80,  P: 40, K: 40}
       flowering: {max_days: 85,   N: 100, P: 50, K: 50}
       ripening:  {max_days: 9999, N: 60,  P: 30, K: 40}
+  # The other crops in the Kaggle dataset (whole-season, dataset-derived N/P/K targets).
+  apple:       {ta: ஆப்பிள், p: 0.50, targets: dataset}            # FAO-56: Apples, Cherries, Pears
+  banana:      {ta: வாழை, p: 0.35, targets: dataset}               # FAO-56: Banana
+  blackgram:   {ta: உளுந்து, p: 0.45, targets: dataset}            # ASSUMPTION - FAO-56 "Beans, dry and Pulses" (not listed)
+  chickpea:    {ta: கொண்டைக்கடலை, p: 0.50, targets: dataset}       # FAO-56: Chick pea
+  coconut:     {ta: தென்னை, p: 0.65, targets: dataset}             # FAO-56: Palm Trees (no coconut entry)
+  coffee:      {ta: காபி, p: 0.40, targets: dataset}               # FAO-56: Coffee
+  grapes:      {ta: திராட்சை, p: 0.35, targets: dataset}           # FAO-56: Grapes - Table or Raisin
+  jute:        {ta: சணல், p: 0.50, targets: dataset}               # ASSUMPTION - not in FAO-56; typical field-crop value
+  kidneybeans: {ta: ராஜ்மா, p: 0.45, targets: dataset}             # FAO-56: Beans, dry and Pulses
+  lentil:      {ta: மசூர் பருப்பு, p: 0.50, targets: dataset}       # FAO-56: Lentil
+  mango:       {ta: மா, p: 0.50, targets: dataset}                 # ASSUMPTION - not in FAO-56; Citrus value used
+  mothbeans:   {ta: மோத் பீன்ஸ், p: 0.45, targets: dataset}         # ASSUMPTION - FAO-56 "Beans, dry and Pulses" (not listed)
+  mungbean:    {ta: பாசிப்பயறு, p: 0.45, targets: dataset}         # ASSUMPTION - FAO-56 "Beans, dry and Pulses" (not listed)
+  muskmelon:   {ta: முலாம்பழம், p: 0.40, targets: dataset}         # FAO-56: Sweet Melons
+  orange:      {ta: ஆரஞ்சு, p: 0.50, targets: dataset}             # FAO-56: Citrus
+  papaya:      {ta: பப்பாளி, p: 0.35, targets: dataset}            # ASSUMPTION - not in FAO-56; Banana value used (shallow roots)
+  pigeonpeas:  {ta: துவரை, p: 0.45, targets: dataset}              # ASSUMPTION - FAO-56 "Beans, dry and Pulses" (not listed)
+  pomegranate: {ta: மாதுளை, p: 0.50, targets: dataset}             # ASSUMPTION - not in FAO-56; Citrus value used
+  watermelon:  {ta: தர்பூசணி, p: 0.40, targets: dataset}           # FAO-56: Watermelon
 
 # Per-nutrient use efficiency (ASSUMPTION-tagged; N/P/K differ)
 use_eff_N: 0.60   # ASSUMPTION - verify vs TNAU/ICAR (nitrogen use efficiency)
@@ -101,6 +130,7 @@ deduct_spike: 0.05        # ASSUMPTION - verify vs TNAU/ICAR
 deduct_weather_fallback: 0.15 # ASSUMPTION - verify vs TNAU/ICAR
 deduct_missing_npk: 0.20  # ASSUMPTION - verify vs TNAU/ICAR
 deduct_lt5_days: 0.15     # ASSUMPTION - verify vs TNAU/ICAR
+deduct_dataset_targets: 0.10 # ASSUMPTION - N/P/K target is a dataset median, not an agronomy recommendation
 sensor_fault_confidence_cap: 0.40 # ASSUMPTION - verify vs TNAU/ICAR (rule R5)
 confidence_high: 0.70     # ASSUMPTION - verify vs TNAU/ICAR
 confidence_medium: 0.40   # ASSUMPTION - verify vs TNAU/ICAR

@@ -30,16 +30,32 @@ def client(tmp_path, monkeypatch):
     return c
 
 
-def test_first_run_creates_demo_farm_with_data(client):
-    farms = client.get("/api/farms").json()
-    assert len(farms) == 1 and farms[0]["has_telemetry"] is True
-    assert len(client.get(f"/api/farms/{farms[0]['id']}/telemetry").json()["rows"]) == 8
+def test_starts_with_no_preset_farm(client):
+    assert client.get("/api/farms").json() == []
+
+
+def test_sample_data_for_a_farm_without_a_sensor(client):
+    farm = client.post("/api/farms", json=MAIZE).json()
+    r = client.post(f"/api/farms/{farm['id']}/sample-data").json()
+    assert r["rows"] == 8 and r["farm"]["has_telemetry"] is True
+
+
+def test_planting_date_sets_the_stage(client):
+    from datetime import date, timedelta
+    planted = (date.today() - timedelta(days=60)).isoformat()
+    farm = client.post("/api/farms", json={**MAIZE, "crop": "tomato", "planted_on": planted,
+                                           "area_acres": 0.5, "area_unit": "cent"}).json()
+    assert farm["days_since_planting"] == 60 and farm["area_unit"] == "cent"
+    client.post(f"/api/farms/{farm['id']}/sample-data")
+    assert client.post(f"/api/farms/{farm['id']}/advice").json()["stage"] == "flowering"  # day 60
+    future = (date.today() + timedelta(days=3)).isoformat()
+    assert client.post("/api/farms", json={**MAIZE, "planted_on": future}).status_code == 400
 
 
 def test_create_update_delete(client):
     farm = client.post("/api/farms", json=MAIZE).json()
     assert farm["crop"] == "maize" and farm["has_telemetry"] is False
-    assert len(client.get("/api/farms").json()) == 2
+    assert len(client.get("/api/farms").json()) == 1
     updated = client.put(f"/api/farms/{farm['id']}", json={**MAIZE, "name": "South field", "area_acres": 3}).json()
     assert (updated["name"], updated["area_acres"]) == ("South field", 3)
     assert client.delete(f"/api/farms/{farm['id']}").status_code == 204
@@ -47,12 +63,13 @@ def test_create_update_delete(client):
 
 
 @pytest.mark.parametrize("patch, status", [
-    ({"crop": "banana"}, 400),
+    ({"crop": "dragonfruit"}, 400),
     ({"crop": "rice", "stage": "fruiting"}, 400),
     ({"soil": "peat"}, 400),
     ({"area_acres": 0}, 422),
     ({"location": {**SALEM, "lat": 120}}, 422),
     ({"name": ""}, 422),
+    ({"area_unit": "bigha"}, 422),
 ])
 def test_farm_validation(client, patch, status):
     assert client.post("/api/farms", json={**MAIZE, **patch}).status_code == status

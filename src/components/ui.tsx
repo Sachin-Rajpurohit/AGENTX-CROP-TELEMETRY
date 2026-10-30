@@ -2,13 +2,6 @@ import { useState } from 'react';
 import { AlertTriangle, CheckCircle2, ChevronDown, Clock, Loader2, Volume2 } from 'lucide-react';
 import { speak, type TraceStep, type Urgency } from '../api';
 
-export const CROP_LABEL: Record<string, { en: string; ta: string }> = {
-  tomato: { en: 'Tomato', ta: 'தக்காளி' },
-  rice: { en: 'Rice (paddy)', ta: 'நெல்' },
-  maize: { en: 'Maize', ta: 'மக்காச்சோளம்' },
-  cotton: { en: 'Cotton', ta: 'பருத்தி' },
-};
-
 export const STAGE_LABEL: Record<string, string> = {
   seedling: 'Seedling',
   vegetative: 'Vegetative growth',

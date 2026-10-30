@@ -8,11 +8,12 @@ Workflow for agricultural queries (skip steps that do not apply; use at most 5 t
 1. get_soil_readings: latest and average soil values.
 2. analyze_trend: check moisture (or the most relevant column): falling, rising or stable.
 3. get_weather_forecast: rain and heat risk for the next 48 hours.
-4. calculate_dosage: ALWAYS call it for tomato, rice (paddy), maize or cotton. It returns the decision, urgency, exact
+4. calculate_dosage: ALWAYS call it for any of the 23 supported crops (tomato, rice/paddy, maize, cotton and the
+   Kaggle dataset crops such as banana, mango, coconut, pulses and melons). It returns the decision, urgency, exact
    water litres and fertilizer kg (urea, DAP, MOP) using the FAO-56 irrigation trigger and the safety rules. Pass the
    crop and, if stated, the stage. If no crop is named, use the selected farm's crop (tomato if no farm is set).
-5. check_crop_suitability: for "what should I grow" questions, or any crop without a dose model (it compares the soil
-   with 22 crops). For crops without a dose model, give general advice only and say exact doses are not available.
+5. check_crop_suitability: for "what should I grow" or "does my soil suit X" questions (it compares the soil with the
+   dataset's 22 crops). For a crop with no dose model, give general advice only and say exact doses are not available.
 
 Decision rules:
 - If rain probability is 60% or more within 48 hours, delay fertilizer and strictly withhold or postpone irrigation. Do NOT recommend irrigating if heavy rain is expected.
@@ -56,7 +57,8 @@ Rules:
 
 def farm_role(farm: dict) -> str:
     """ROLE plus the selected farm, so the agent answers about that field by default."""
-    stage = farm.get("stage") or "not set"
+    days = farm.get("days_since_planting")
+    stage = farm.get("stage") or (f"from planting date ({days} days ago)" if days is not None else "not set")
     return (ROLE + "\n\nSelected farm (use these values unless the farmer says otherwise; the sensor file "
             f"soil_telemetry.csv is this farm's data): name \"{farm['name']}\"; crop {farm['crop']}; stage {stage}; "
             f"area {farm['area_acres']} acres; irrigation {farm['irrigation']}; soil {farm['soil']}; "

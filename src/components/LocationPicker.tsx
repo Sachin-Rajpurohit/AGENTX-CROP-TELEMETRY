@@ -2,14 +2,12 @@ import { useEffect, useState } from 'react';
 import { Crosshair, Loader2, MapPin, Search } from 'lucide-react';
 import { api, type Place } from '../api';
 
-/** Pick any place: search by name (Open-Meteo geocoding), use this device's GPS, or type coordinates. */
+/** Pick any place: search a village or town by name (Open-Meteo geocoding), or use this device's GPS. */
 export default function LocationPicker({ value, onChange }: { value: Place | null; onChange: (p: Place) => void }) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Place[]>([]);
   const [searching, setSearching] = useState(false);
   const [message, setMessage] = useState('');
-  const [manual, setManual] = useState(false);
-  const [coords, setCoords] = useState({ lat: '', lon: '' });
 
   useEffect(() => {
     const q = query.trim();
@@ -23,7 +21,7 @@ export default function LocationPicker({ value, onChange }: { value: Place | nul
       try {
         const found = await api.geocode(q);
         setResults(found);
-        setMessage(found.length ? '' : 'No place found. Try a nearby town, or enter coordinates.');
+        setMessage(found.length ? '' : 'No place found. Try the nearest town, or use your location.');
       } catch (e) {
         setMessage((e as Error).message);
       } finally {
@@ -54,15 +52,6 @@ export default function LocationPicker({ value, onChange }: { value: Place | nul
     );
   };
 
-  const applyCoords = () => {
-    const lat = Number(coords.lat);
-    const lon = Number(coords.lon);
-    if (!coords.lat || !coords.lon || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
-      return setMessage('Latitude must be between -90 and 90, longitude between -180 and 180.');
-    }
-    choose({ name: `Coordinates (${lat}, ${lon})`, lat, lon });
-    setMessage('');
-  };
 
   const field =
     'w-full rounded-xl border border-soil-300 bg-white px-3 py-2.5 text-lg focus:border-leaf-700 focus:outline-none focus:ring-2 focus:ring-leaf-200';
@@ -111,37 +100,7 @@ export default function LocationPicker({ value, onChange }: { value: Place | nul
         >
           <Crosshair className="h-4 w-4" aria-hidden /> Use my location
         </button>
-        <button
-          type="button"
-          onClick={() => setManual(!manual)}
-          className="rounded-full border border-soil-300 bg-white px-3 py-1.5 font-semibold text-soil-700 hover:bg-soil-100"
-        >
-          {manual ? 'Hide coordinates' : 'Enter coordinates'}
-        </button>
       </div>
-      {manual && (
-        <div className="flex flex-wrap items-end gap-2">
-          {(['lat', 'lon'] as const).map((k) => (
-            <label key={k} className="min-w-28 flex-1">
-              <span className="text-sm font-semibold text-soil-700">{k === 'lat' ? 'Latitude' : 'Longitude'}</span>
-              <input
-                className={field}
-                type="number"
-                step="any"
-                value={coords[k]}
-                onChange={(e) => setCoords({ ...coords, [k]: e.target.value })}
-              />
-            </label>
-          ))}
-          <button
-            type="button"
-            onClick={applyCoords}
-            className="rounded-xl bg-soil-700 px-4 py-2.5 font-semibold text-white hover:bg-soil-800"
-          >
-            Use these
-          </button>
-        </div>
-      )}
       {message && <p className="text-sm text-soil-700">{message}</p>}
     </div>
   );

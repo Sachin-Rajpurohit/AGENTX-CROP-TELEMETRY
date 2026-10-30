@@ -61,15 +61,18 @@ export interface Farm {
   name: string;
   crop: string;
   stage: string | null;
+  planted_on: string | null;
   area_acres: number;
+  area_unit: 'acre' | 'cent' | 'hectare';
   irrigation: 'drip' | 'flood';
   soil: string;
   location: Place;
   has_telemetry: boolean;
+  days_since_planting: number | null;
   created_at: string;
 }
 
-export type FarmInput = Omit<Farm, 'id' | 'has_telemetry' | 'created_at'>;
+export type FarmInput = Omit<Farm, 'id' | 'has_telemetry' | 'created_at' | 'days_since_planting'>;
 
 export interface Advice {
   input_source: 'upload' | 'manual' | 'sample' | 'farm';
@@ -128,7 +131,10 @@ export interface Sample {
   metadata: { crop: string; soil: string; soil_types: string[]; lat: number; lon: number };
 }
 
-export type Crops = Record<string, { stages: string[]; flooded: boolean; fao56_p: number | null }>;
+export type Crops = Record<
+  string,
+  { en: string; ta: string; stages: string[]; flooded: boolean; fao56_p: number | null; targets_source: 'tnau' | 'dataset' }
+>;
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   let res: Response;
@@ -175,6 +181,8 @@ export const api = {
     form.set('csv', file);
     return request<{ rows: number; farm: Farm }>(`/api/farms/${id}/telemetry`, { method: 'POST', body: form });
   },
+  useSampleData: (id: string) =>
+    request<{ rows: number; farm: Farm }>(`/api/farms/${id}/sample-data`, { method: 'POST' }),
   farmAdvice: (id: string) => request<Advice & { farm: Farm }>(`/api/farms/${id}/advice`, { method: 'POST' }),
 };
 

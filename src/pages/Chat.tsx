@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { RotateCcw, SendHorizontal, Sprout, User } from 'lucide-react';
 import type { ChatReply } from '../api';
 import { clearChat, sendMessage, useChat } from '../chatStore';
+import { cropName, useCrops } from '../crops';
 import { useFarms } from '../farmStore';
+import { farmSize } from './Farms';
 import { AdviceCard, ErrorNote, Spinner, TraceSteps, UrgencyChip } from '../components/ui';
 
 const SUGGESTIONS = [
@@ -68,6 +70,7 @@ function BotReply({ reply }: { reply: ChatReply }) {
 export default function Chat() {
   const { messages, busy } = useChat();
   const { selected: farm } = useFarms();
+  const crops = useCrops();
   const [input, setInput] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -93,7 +96,7 @@ export default function Chat() {
           </p>
           {farm && (
             <p className="mt-1 text-sm font-semibold text-leaf-800">
-              Answering about: {farm.name} · {farm.crop} · {farm.area_acres} acre(s) · {farm.location.name}
+              Answering about: {farm.name} · {cropName(crops, farm.crop)} · {farmSize(farm)} · {farm.location.name}
               {!farm.has_telemetry && <span className="text-warn-700"> · no sensor data yet</span>}
             </p>
           )}

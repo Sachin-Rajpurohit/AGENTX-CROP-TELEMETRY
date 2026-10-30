@@ -66,7 +66,7 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(d["urgency"], "RED")
         self.assertEqual(d["moisture_thresholds"]["trigger"], 25.2)
         self.assertAlmostEqual(d["fertilizer_kg_for_area"]["dap"], 120.88, delta=0.02)
-        self.assertIn("error", json.loads(build_tools()["calculate_dosage"].execute(crop="banana")))
+        self.assertIn("error", json.loads(build_tools()["calculate_dosage"].execute(crop="dragonfruit")))
         rice = json.loads(build_tools()["calculate_dosage"].execute(crop="paddy", stage="tillering"))
         self.assertEqual((rice["crop"], rice["water"]["method"]), ("rice", "flood"))
 

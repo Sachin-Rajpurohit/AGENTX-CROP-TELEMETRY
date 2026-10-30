@@ -2,25 +2,11 @@
 import csv
 import json
 import os
-import re
-import time
-import urllib.request
-import urllib.error
 
 from tools import Tool
 from tools.farm_context import current_farm, farm_default, telemetry_file
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-def _knowledge_path():
-    p1 = os.path.join(REPO_ROOT, "knowledge", "crop_requirements.json")
-    if os.path.exists(p1):
-        return p1
-    p2 = os.path.join(_data_dir(), "crop_requirements.json")
-    if os.path.exists(p2):
-        return p2
-    return os.path.join(REPO_ROOT, "data", "crop_requirements.json")
 
 
 def _data_dir():
@@ -215,39 +201,38 @@ class WeatherForecast(Tool):
         return _out(risk)
 
 
-def _requirements(crop, stage=None):
-    kpath = _knowledge_path()
-    if not os.path.exists(kpath):
-        return None, []
-    with open(kpath, "r", encoding="utf-8") as f:
-        table = json.load(f)
-    key = {k.lower(): k for k in table}.get(str(crop).lower().strip())
-    if key is None:
-        return None, sorted(table)
-    entry = table[key]
-    vals = dict(entry.get("ideal", {}))
-    used_stage = None
-    if stage and stage in entry.get("stages", {}):
-        vals.update(entry["stages"][stage])
-        used_stage = stage
-    return {"crop": key, "stage": used_stage, "ideal": vals, "source": entry.get("source", "unknown")}, sorted(table)
-
-
 class CropRequirements(Tool):
     name = "get_crop_requirements"
-    description = "Ideal soil values (N, P, K, pH, moisture, rainfall where known) for a crop, optionally by growth stage."
+    description = ("N/P/K targets (kg/ha), growth stages and irrigation trigger for any of the 23 supported crops, "
+                   "and where the targets come from.")
     args_doc = '{"crop": "tomato", "stage": "flowering"}'
 
-    def execute(self, crop="tomato", stage=None, **kw):
+    def execute(self, crop=None, stage=None, **kw):
         try:
-            res, known = _requirements(crop, stage)
-            if res is None:
-                return _out({"error": f"no requirements for '{crop}'", "known_crops": known})
-            from config.agronomy import load_agronomy, moisture_thresholds
-            if res["crop"] in load_agronomy()["crops"]:
-                res["ideal"].pop("moisture", None)
-                res["moisture_thresholds"] = moisture_thresholds(crop=res["crop"])
-            return _out(res)
+            from config.agronomy import (
+                crop_stages,
+                load_agronomy,
+                moisture_thresholds,
+                resolve_crop,
+                stage_requirement,
+                targets_from_dataset,
+            )
+            try:
+                crop = resolve_crop(farm_default("crop", crop))
+            except ValueError:
+                return _out({"error": f"no requirements for '{crop}'",
+                             "supported_crops": sorted(load_agronomy()["crops"])})
+            stages = crop_stages(crop)
+            label, targets = stage_requirement(crop, stage if stage in stages else None, 30)
+            return _out({
+                "crop": crop,
+                "stage": label,
+                "stages": stages,
+                "targets_kg_ha": targets,
+                "targets_source": ("median of this crop's rows in the Kaggle Crop Recommendation dataset"
+                                   if targets_from_dataset(crop) else "TNAU Agritech Portal & ICAR"),
+                "moisture_thresholds": moisture_thresholds(soil=farm_default("soil"), crop=crop),
+            })
         except Exception as e:
             return _out({"error": f"could not read crop requirements: {e}"})
 
@@ -256,9 +241,11 @@ class CalculateDosage(Tool):
     name = "calculate_dosage"
     description = ("Full advisory from soil_telemetry.csv: decision, urgency, irrigation litres/day and fertilizer "
                    "kg (urea, DAP, MOP) for the area, using the live 48h forecast, sensor quality checks and safety "
-                   "rules. Crops: tomato (stages seedling, vegetative, flowering, fruiting), rice (seedling, "
-                   "tillering, flowering, ripening; always flooded), maize and cotton (whole-season targets, "
-                   "stage ignored). Omit stage if unknown. Irrigation: drip or flood.")
+                   "rules. 23 crops: tomato (stages seedling, vegetative, flowering, fruiting), rice (seedling, "
+                   "tillering, flowering, ripening; always flooded), and whole-season targets (stage ignored) for "
+                   "maize, cotton, apple, banana, blackgram, chickpea, coconut, coffee, grapes, jute, kidneybeans, "
+                   "lentil, mango, mothbeans, mungbean, muskmelon, orange, papaya, pigeonpeas, pomegranate, "
+                   "watermelon. Omit stage if unknown. Irrigation: drip or flood.")
     args_doc = ('{"crop": "tomato", "area_acres": 1.0, "stage": "flowering", "irrigation": "drip"} '
                 '(all optional: omitted values come from the selected farm)')
 
@@ -282,7 +269,7 @@ class CalculateDosage(Tool):
             area_acres = _num(farm_default("area_acres", area_acres, 1.0), 1.0)
             r = run_advisory(df, area_acres=area_acres,
                              irrigation=str(farm_default("irrigation", irrigation, "drip")).lower(),
-                             days_after_transplanting=30,
+                             days_after_transplanting=int(farm_default("days_after_transplanting", None, 30)),
                              lat=_num(farm_default("lat", lat, 10.79), 10.79),
                              lon=_num(farm_default("lon", lon, 78.70), 78.70),
                              crop=crop, soil=farm_default("soil", soil), stage=stage or None)

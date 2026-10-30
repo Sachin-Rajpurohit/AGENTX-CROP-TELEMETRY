@@ -26,6 +26,16 @@ def _profiles() -> dict[str, pd.DataFrame]:
     return {crop: pd.DataFrame({k: v.loc[crop] for k, v in stats.items()}) for crop in g.groups}
 
 
+def dataset_targets(crop: str) -> dict[str, float]:
+    """Median N, P, K of a crop's rows in the dataset: the typical level where it grows well."""
+    profile = _profiles().get(crop)
+    if profile is None:
+        raise ValueError(f"{crop!r} is not in {DATASET.name}")
+    df = pd.read_csv(DATASET)
+    rows = df[df["label"] == crop]
+    return {n: round(float(rows[n].median()), 1) for n in ("N", "P", "K")}
+
+
 def crop_fit(readings: dict, crop: str | None = None, top_n: int = 3) -> dict:
     """Rank the dataset's crops by how many readings fall in their typical range (ties: closest
     to the crop's mean, in standard deviations). `readings` keys: N, P, K, temperature, humidity, ph."""
